@@ -29,7 +29,6 @@ def nloglik_mle(coef, x, y, offset):
 
 nloglik_mle_hess = jax.hessian(nloglik_mle)
 nloglik_mle_vmap = jax.vmap(nloglik_mle, in_axes=(0, None, None, None))
-nloglik_mle_newton = newton_factory(nloglik_mle, niter=5)
 
 @jax.jit
 def nloglik(coef, x, y, offset, prior_variance):
@@ -40,12 +39,12 @@ def nloglik(coef, x, y, offset, prior_variance):
 
 nloglik_hess = jax.hessian(nloglik)
 nloglik_vmap = jax.vmap(nloglik, in_axes=(0, None, None, None, None))
-nloglik_newton = newton_factory(nloglik_mle, niter=5)
 
 def wakefield(coef_init, x, y, offset, prior_variance, nullfit):
-    solver = jaxopt.LBFGS(fun=nloglik_mle, maxiter=100)
-    params, state = solver.run(coef_init, x=x, y=y, offset=offset)
-    hessian = -nloglik_mle_hess(params, x, y, offset)
+    solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), niter=5)
+    state = solver(coef_init)
+    params = state.x
+    hessian = -state.h
 
     # approximate BF with wakefield
     # see appendix of Wakefield 2009 for justicatioin of why there is no dependence on the intercept
@@ -62,9 +61,10 @@ def wakefield(coef_init, x, y, offset, prior_variance, nullfit):
     return UnivariateRegression(lbf + nullfit.logp, lbf, beta, params)
 
 def laplace_mle(coef_init, x, y, offset, prior_variance, nullfit):
-    solver = jaxopt.LBFGS(fun=nloglik_mle, maxiter=100)
-    params, state = solver.run(coef_init, x=x, y=y, offset=offset)
-    hessian = -nloglik_mle_hess(params, x, y, offset)
+    solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), niter=5)
+    state = solver(coef_init)
+    params = state.x
+    hessian = -state.h
 
     # compute wakefield lbf
     s2 = -1/hessian[1,1]
@@ -83,9 +83,6 @@ def laplace_mle(coef_init, x, y, offset, prior_variance, nullfit):
 def hermite_factory(m):
     base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
     def hermite(coef_init, x, y, offset, prior_variance, nullfit):
-        # solver = jaxopt.LBFGS(fun=nloglik, maxiter=100)
-        # params, state = solver.run(coef_init, x=x, y=y, offset=offset, prior_variance=prior_variance)
-        # hessian = -nloglik_hess(params, x, y, offset, prior_variance)
         solver = newton_factory(Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance), niter=5)
         state = solver(coef_init)
         params = state.x
@@ -152,6 +149,13 @@ def initialize_coef(X, y, offset, prior_variance):
     return coef_init
 
 
-def logistic_susie_hermite(X, y, L=5, prior_variance=1, maxiter=10, tol=1e-3, m=5):
-    hermite = partial(logistic_ser_hermite, m=m)
-    return gibss(X, y, L, prior_variance, maxiter, tol, initialize_coef, hermite)
+def logistic_susie(X, y, L=5, prior_variance=1, maxiter=10, tol=1e-3, method='hermite', m=5):
+    if method == 'hermite':
+        serfun = partial(logistic_ser_hermite, m=m)
+    elif method == 'wakefield':
+        serfun = logistic_ser_wakefield
+    elif method == 'lapmle':
+        serfun = logistic_ser_lapmle
+    else:
+        raise ValueError(f"Unknown method {method}: must be one of 'hermite', 'wakefield', or 'lapmle'")
+    return gibss(X, y, L, prior_variance, maxiter, tol, initialize_coef, serfun)
