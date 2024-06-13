@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gibss"
+version = "0.0"
+dependencies = [
+  "jax",
+  "jaxopt",
+  "flax",
+  "numpy"
+]
+requires-python = ">=3.8"
+authors = [
+  {name = "Karl Tayeb", email = "karl.tayeb7@gmail.com"}
+]
+maintainers = [
+  {name = "Karl Tayeb", email = "karl.tayeb7@gmail.com"}
+]
+description = "Bayesian variable selection for (almost) any regresion model"
+readme = "README.md"
+license = {file = "LICENSE.txt"}
