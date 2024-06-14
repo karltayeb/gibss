@@ -2,18 +2,19 @@
 # for each variable maximize the intercept, "profile likelihood" method
 import jax.numpy as jnp
 from jax.scipy.stats import norm
-import jaxopt
 import jax
 import numpy as np
 from functools import partial
 from gibss.ser import ser
 from jax.tree_util import Partial
-from flax import struct
 from typing import Any
+from dataclasses import dataclass
 from gibss.newton import newton_factory
 from gibss.gibss import gibss
 
-@struct.dataclass
+@partial(jax.tree_util.register_dataclass,
+         data_fields=['logp', 'lbf', 'beta', 'params'], meta_fields=[])
+@dataclass
 class UnivariateRegression:
     logp: float
     lbf: float
@@ -111,11 +112,13 @@ def hermite_factory(m):
 @jax.jit
 def fit_null(y, offset):
     """Logistic SER"""
-    # fit logistic regression for each column of X
+    # we fit null model by giving a covariate with no variance and setting prior variance to ~=0
+    # so that we can just reuse the code for fitting the full model
     x = jnp.zeros_like(y)
     prior_variance = 1e-10
-    solver = jaxopt.LBFGS(fun=nloglik, maxiter=100)
-    params, state = solver.run(np.zeros(2), x=x, y=y, offset=offset, prior_variance=prior_variance)
+    solver = newton_factory(Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance), niter=20)
+    state = solver(jnp.zeros(2))
+    params = state.x    
     ll0 = -nloglik_mle(params, x, y, offset)
     b0 = params[0]
     return UnivariateRegression(ll0, 0, b0, params)

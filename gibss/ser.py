@@ -1,11 +1,13 @@
-from flax import struct
-from typing import Any, Callable
+from typing import Any
 from jax import Array
-from functools import partial
 import jax
 import jax.numpy as jnp
+from dataclasses import dataclass
+from functools import partial
 
-@struct.dataclass
+@partial(jax.tree_util.register_dataclass,
+         data_fields=['psi', 'alpha', 'lbf_ser', 'fits', 'prior_variance'], meta_fields=[])
+@dataclass
 class SER:
     psi: Array  # predictions
     alpha: Array  # posterior inclusion probability

@@ -1,16 +1,10 @@
 from jax import Array
 from typing import List, Callable, Any
-from gibss.ser import SER
-import jax.numpy as jnp
 import numpy as np
-from flax import struct
+from dataclasses import dataclass
+import jax
+from functools import partial
 
-import logging
-import sys
-
-# logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-
-# simple monitor declares convergence when the 
 class Monitor:
     def __init__(self, components, tol=1e-3):
         self.converged = False
@@ -27,7 +21,9 @@ class Monitor:
     def report(self):
         print(f'Converged: {self.converged} at tolerance {self.tol}')
 
-@struct.dataclass
+@partial(jax.tree_util.register_dataclass,
+         data_fields=['components', 'monitor', 'iter'], meta_fields=[])
+@dataclass
 class AdditiveModel:
     components: List[Any]
     monitor: Monitor
