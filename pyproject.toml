@@ -7,11 +7,9 @@ name = "gibss"
 version = "0.0"
 dependencies = [
   "jax",
-  "jaxopt",
-  "flax",
   "numpy"
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 authors = [
   {name = "Karl Tayeb", email = "karl.tayeb7@gmail.com"}
 ]
