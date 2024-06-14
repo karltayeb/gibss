@@ -6,7 +6,7 @@ from gibss.logisticprofile import wakefield, laplace_mle, hermite_factory, fit_n
 import pytest
 from argparse import Namespace
 
-# @pytest.fixture
+@pytest.fixture
 def data():
     np.random.seed(0)
     x = np.random.normal(size=1000)
@@ -20,34 +20,25 @@ def data():
     return data
 
 def test_fit_null(data):
-    b0, ll0 = fit_null(data.y, data.offset)
-    print('Fitting null model...')
-    print(f'\tb0: {b0}, ll0: {ll0}')
-    assert True
+    # null fit with no offset agrees with log odds
+    nullfit = fit_null(data.y, np.zeros_like(data.y))
+    b0 = nullfit.beta
+    ybar = data.y.mean()
+    beta0 = np.log(ybar/(1-ybar))
+    assert abs(b0 - beta0) < 1e-2
+
+    # if we include the mle for the intercept in the offset, 
+    # then we should estimate the intercept to be 0
+    nullfit = fit_null(data.y, np.ones_like(data.y)*np.log(ybar/(1-ybar)))
+    b0 = nullfit.beta
+    assert abs(b0) < 1e-2
 
 def test_wakefield(data):
-    lbf, beta, params = wakefield(data.coef_init, data.x, data.y, data.offset, data.prior_variance)
+    nullfit = fit_null(data.y, data.offset)
+    res = wakefield(data.coef_init, data.x, data.y, data.offset, data.prior_variance, nullfit)
     print('Wakefield approximation...')
-    print(f'\tlbf: {lbf:.2f}, beta: {beta:.2f}, params: {params}')
+    print(f'\tlbf: {res.lbf:.2f}, beta: {res.beta:.2f}, params: {res.params}')
     assert True
 
-def test_laplace_mle(data):
-    lbf, beta, params = laplace_mle(data.coef_init, data.x, data.y, data.offset, data.prior_variance)
-    from gibss.logisticprofile import nloglik_mle
-    ll = -nloglik_mle(params, data.x, data.y, data.offset)
-    print('Laplace MLE...')
-    print(f'\tlogp: {lbf:.2f}, beta: {beta:.2f}, params: {params}')
-    print(f'\tll: {ll:.2f}')
-    assert True
-
-def test_hermite(data):
-    hermite = hermite_factory(5)
-    lbf, beta, params = hermite(data.coef_init, data.x, data.y, data.offset, data.prior_variance)
-    print('Hermite quadrature...')
-    print(f'\tlbf: {lbf:.2f}, beta: {beta:.2f}, params: {params}')
-    assert True
-
-test_fit_null(data())
-test_wakefield(data())
-test_laplace_mle(data())
-test_hermite(data())
+# test_fit_null(data())
+# test_wakefield(data())
