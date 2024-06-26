@@ -59,7 +59,7 @@ def wakefield(coef_init, x, y, offset, prior_variance, nullfit):
     # with a normal prior
     beta = params[1] * prior_variance / (s2 + prior_variance)
     # NOTE: the value for logp might not make sense
-    return UnivariateRegression(lbf + nullfit.logp, lbf, beta, params)
+    return UnivariateRegression(lbf + nullfit.logp, lbf, beta, state)
 
 def laplace_mle(coef_init, x, y, offset, prior_variance, nullfit):
     solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), niter=5)
@@ -78,7 +78,7 @@ def laplace_mle(coef_init, x, y, offset, prior_variance, nullfit):
         - 0.5 * tau*tau1/(tau + tau1) * params[1]**2
     lbf = logp - nullfit.logp
     beta = params[1] * prior_variance / (s2 + prior_variance)
-    return UnivariateRegression(logp, lbf, beta, params)
+    return UnivariateRegression(logp, lbf, beta, state)
 
 # gauss-hermite quadrature nodes and weights
 def hermite_factory(m):
@@ -104,7 +104,7 @@ def hermite_factory(m):
         # compute posterior mean of effect
         y2 = nodes * jnp.exp(y - logp)
         beta = jnp.sum(y2/norm.pdf(nodes, loc=mu, scale=sigma) * weights)
-        return UnivariateRegression(logp, lbf, beta, params)
+        return UnivariateRegression(logp, lbf, beta, state)
     
     hermite_jit = jax.jit(hermite)
     return hermite_jit
