@@ -8,21 +8,22 @@ from functools import partial
 class Monitor:
     def __init__(self, components, tol=1e-3):
         self.converged = False
-        self.components = components
+        self.psi = [c.psi for c in components]
         self.tol = tol
 
     def monitor(self, new_components):
-        diffs = [np.max(np.abs(c1.psi - c2.psi)) for c1, c2 in zip(self.components, new_components)]
+        new_psi = [c.psi for c in new_components]
+        diffs = [np.max(np.abs(psi1 - psi2)) for psi1, psi2 in zip(self.psi, new_psi)]
         print(f'Max diffs: {diffs}')
         if np.max(diffs) < self.tol:
             self.converged = True
-        self.components = new_components
+        self.psi = new_psi
 
     def report(self):
         print(f'Converged: {self.converged} at tolerance {self.tol}')
 
-@partial(jax.tree_util.register_dataclass,
-         data_fields=['components', 'monitor', 'iter'], meta_fields=[])
+
+@partial(jax.tree_util.register_dataclass, data_fields=['components', 'monitor', 'iter'], meta_fields=[])
 @dataclass
 class AdditiveModel:
     components: List[Any]
