@@ -12,4 +12,7 @@ def todict(x):
 
     # NOTE: eventually we should improve monitor and report information about model fitting
     monitor = x.pop('monitor', None)
+    if monitor is not None:
+        x['converged'] = monitor.converged
+        x['tol'] = monitor.tol 
     return x

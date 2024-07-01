@@ -13,13 +13,13 @@ from gibss.newton import newton_factory
 from gibss.gibss import gibss
 
 @partial(jax.tree_util.register_dataclass,
-         data_fields=['logp', 'lbf', 'beta', 'params'], meta_fields=[])
+         data_fields=['logp', 'lbf', 'beta', 'state'], meta_fields=[])
 @dataclass
 class UnivariateRegression:
     logp: float
     lbf: float
     beta: float
-    params: Any
+    state: Any
 
 @jax.jit
 def nloglik_mle(coef, x, y, offset):
@@ -121,7 +121,7 @@ def fit_null(y, offset):
     params = state.x    
     ll0 = -nloglik_mle(params, x, y, offset)
     b0 = params[0]
-    return UnivariateRegression(ll0, 0, b0, params)
+    return UnivariateRegression(ll0, 0, b0, state)
 
 
 # use Partial so that you can pass to jitted ser function
