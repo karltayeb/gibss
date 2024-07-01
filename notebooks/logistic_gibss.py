@@ -1,15 +1,27 @@
 #%%
 import numpy as np
 from gibss.logisticprofile import logistic_susie
+from gibss.logisticprofile import logistic_ser_hermite
+from gibss.logisticprofile import initialize_coef
+from gibss.logisticprofile import fit_null
+from gibss.utils import todict
 
-X = np.random.normal(size = (100, 1000))
+X = np.random.normal(size = (500, 2000))
 x = X[0]
 y = np.random.binomial(1, 1/(1 + np.exp(-(-1 + 0.5 * x))))
 offset = 0.
 prior_variance = 1.
 
+nullfit = fit_null(y, 0.)
 
-logistic_susie(X, y, offset, L=3, maxiter=3)
+#%%
+coef_init = initialize_coef(X, y, 0, 1.)
+serfit = logistic_ser_hermite(coef_init, X, y, 0., 1.0, 5)
+
+#%%
+susiefit = logistic_susie(X, y, L=3, maxiter=50, tol=1e-5)
+susiedict = todict(susiefit) 
+
 # %%
 from gibss.logisticprofile import initialize_coef, logistic_ser_hermite
 coef_init = initialize_coef(X, y, 0., prior_variance)
