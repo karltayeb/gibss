@@ -49,6 +49,7 @@ def additive_model(psi_init: Array, components: List[Any], fit_functions: List[C
 
     # subsequent iterations: add and subtract
     psi = psi_init
+    i = 0  # case: maxiter = 1
     for i in range(maxiter-1):
         print(f'Iteration {i}')
         new_components = []
