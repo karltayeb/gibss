@@ -6,7 +6,8 @@ build-backend = "hatchling.build"
 name = "gibss"
 version = "0.0"
 dependencies = [
-  "jax",
+  "jax==0.4.29",
+  "jaxlib==0.4.29",
   "numpy"
 ]
 requires-python = ">=3.12"
