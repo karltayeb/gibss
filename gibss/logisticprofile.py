@@ -2,14 +2,16 @@
 # for each variable maximize the intercept, "profile likelihood" method
 import jax.numpy as jnp
 from jax.scipy.stats import norm
+from jax.scipy.special import logsumexp
 import jax
 import numpy as np
 from functools import partial
-from gibss.ser import ser
+from gibss.ser import ser, _ser
 from jax.tree_util import Partial
 from typing import Any
 from dataclasses import dataclass
 from gibss.newton import newton_factory
+from gibss.gd_backtracking import gd_factory
 from gibss.gibss import gibss
 
 @partial(jax.tree_util.register_dataclass,
@@ -41,6 +43,11 @@ def nloglik(coef, x, y, offset, prior_variance):
 nloglik_hess = jax.hessian(nloglik)
 nloglik_vmap = jax.vmap(nloglik, in_axes=(0, None, None, None, None))
 
+def compute_wakefield_lbf(betahat, s2, prior_variance):
+    lbf = norm.logpdf(betahat, loc=0, scale=jnp.sqrt(s2 + prior_variance)) \
+        - norm.logpdf(betahat, loc=0, scale=jnp.sqrt(s2))
+    return lbf
+
 def wakefield(coef_init, x, y, offset, prior_variance, nullfit):
     solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), niter=5)
     state = solver(coef_init)
@@ -50,8 +57,7 @@ def wakefield(coef_init, x, y, offset, prior_variance, nullfit):
     # approximate BF with wakefield
     # see appendix of Wakefield 2009 for justicatioin of why there is no dependence on the intercept
     s2 = -1/hessian[1,1]
-    lbf = norm.logpdf(params[1], loc=0, scale=jnp.sqrt(s2 + prior_variance)) \
-        - norm.logpdf(params[1], loc=0, scale=jnp.sqrt(s2))
+    lbf = compute_wakefield_lbf(params[1], s2, prior_variance)
 
     # shrink  the effect size
     # this gives an asymptotic approximation to the MAP estimate from the MLE
@@ -61,6 +67,40 @@ def wakefield(coef_init, x, y, offset, prior_variance, nullfit):
     # NOTE: the value for logp might not make sense
     return UnivariateRegression(lbf + nullfit.logp, lbf, beta, state)
 
+def estimate_prior_variance_wakefield(fits, prior_variance_init):
+    """Estimate prior variance using Wakefield approximation"""
+    def f(ln_prior_variance):
+        return -logsumexp(compute_wakefield_lbf(
+            fits.state.x[:, 1],
+            1/fits.state.h[:, 1,1], 
+            jnp.exp(ln_prior_variance)))
+    fopt = gd_factory(f, maxiter=100, init_ss=1.)
+    return jnp.exp(fopt(jnp.atleast_1d(jnp.log(prior_variance_init))).x)[0]
+
+@partial(jax.vmap, in_axes=(0, None))
+def update_prior_variance_wakefield(fit: UnivariateRegression, prior_variance: float) -> UnivariateRegression:
+    # extract state
+    betahat = fit.state.x[1]
+    s2 = 1/fit.state.h[1, 1]
+    ll0 = fit.logp - fit.lbf
+
+    # compute wakefield lbf
+    lbf = compute_wakefield_lbf(betahat, s2, prior_variance)
+    beta = betahat * prior_variance / (s2 + prior_variance)
+    return UnivariateRegression(lbf + ll0, lbf, beta, fit.state)
+
+# def compute_lapmle_logp(ll, betahat, tau1, tau):
+#     logp = ll + \
+#         0.5 * jnp.log(tau1/(tau1 + tau)) \
+#         - 0.5 * tau*tau1/(tau + tau1) * betahat**2
+#     return logp
+
+def compute_lapmle_logp(ll, betahat, s2, prior_variance):
+    logp = ll + \
+        0.5 * jnp.log(2 * jnp.pi * s2) + \
+        norm.logpdf(betahat, loc=0, scale=jnp.sqrt(s2 + prior_variance))
+    return logp
+
 def laplace_mle(coef_init, x, y, offset, prior_variance, nullfit):
     solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), niter=5)
     state = solver(coef_init)
@@ -69,16 +109,35 @@ def laplace_mle(coef_init, x, y, offset, prior_variance, nullfit):
 
     # compute wakefield lbf
     s2 = -1/hessian[1,1]
-    tau1 = - hessian[1,1]
-    tau =  1 / prior_variance
-    ll = - nloglik_mle(params, x, y, offset)
-
-    logp = ll + \
-        0.5 * jnp.log(tau1/(tau1 +tau)) \
-        - 0.5 * tau*tau1/(tau + tau1) * params[1]**2
+    ll = - state.f
+    betahat = params[1]
+    logp = compute_lapmle_logp(ll, betahat, s2, prior_variance)
     lbf = logp - nullfit.logp
-    beta = params[1] * prior_variance / (s2 + prior_variance)
+    beta = betahat * prior_variance / (s2 + prior_variance)
     return UnivariateRegression(logp, lbf, beta, state)
+
+@partial(jax.vmap, in_axes=(0, None))
+def update_prior_variance_lapmle(fit: UnivariateRegression, prior_variance: float) -> UnivariateRegression:
+    # extract state
+    betahat = fit.state.x[1]
+    s2 = 1/fit.state.h[1, 1]
+    ll = -fit.state.f
+
+    # compute wakefield lbf
+    logp = compute_lapmle_logp(ll, betahat, s2, prior_variance)
+    lbf = fit.lbf - fit.logp + logp
+    beta = betahat * prior_variance / (s2 + prior_variance)
+    return UnivariateRegression(logp, lbf, beta, fit.state)
+    
+
+def estimate_prior_variance_lapmle(fits: UnivariateRegression, prior_variance_init: float) -> float:
+    """Estimate prior variance using Wakefield approximation"""
+    def f(ln_prior_variance):
+        return -logsumexp(compute_lapmle_logp(
+            -fits.state.f, fits.state.x[:, 1], 1/fits.state.h[:, 1,1], jnp.exp(ln_prior_variance))
+        )
+    fopt = gd_factory(f, maxiter=100, init_ss=1.)
+    return jnp.exp(fopt(jnp.atleast_1d(jnp.log(prior_variance_init))).x)[0]
 
 # gauss-hermite quadrature nodes and weights
 def hermite_factory(m):
@@ -135,8 +194,27 @@ def logistic_ser_wakefield(coef_init, X, y, offset, prior_variance):
     return ser(coef_init, X, y, offset, prior_variance, vwakefield, pfitnull)
 
 @jax.jit
+def logistic_ser_wakefield_eb(coef_init, X, y, offset, prior_variance):
+    # 1. fit ser, choice of prior variance doesn't matter
+    nullfit = pfitnull(y, offset)
+    fits = vwakefield(coef_init, X, y, offset, prior_variance, nullfit)
+    prior_variance = estimate_prior_variance_wakefield(fits, prior_variance)
+    fits2 = update_prior_variance_wakefield(fits, prior_variance)
+    return _ser(fits2, prior_variance, X)
+
+@jax.jit
 def logistic_ser_lapmle(coef_init, X, y, offset, prior_variance):
     return ser(coef_init, X, y, offset, prior_variance, vlapmle, pfitnull)
+
+@jax.jit
+def logistic_ser_lapmle_eb(coef_init, X, y, offset, prior_variance):
+    # 1. fit ser, choice of prior variance doesn't matter
+    nullfit = pfitnull(y, offset)
+    fits = vlapmle(coef_init, X, y, offset, prior_variance, nullfit)
+    prior_variance = estimate_prior_variance_lapmle(fits, prior_variance)
+    fits2 = update_prior_variance_lapmle(fits, prior_variance)
+    return _ser(fits2, prior_variance, X)
+
 
 @partial(jax.jit, static_argnames = ['m'])
 def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m):
