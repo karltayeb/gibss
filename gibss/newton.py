@@ -3,6 +3,7 @@
 # 2. try taking a newton step with stepsize = 1
 # 3. if the likelihood increasses, keep the proposed move and set the stepsize to 1
 # 4. if the likelihood decreases, reject the proposed move and halve the step size
+# Here we assume `f` is a function to MINIMIZE
 import jax
 from functools import partial
 from dataclasses import dataclass
@@ -33,16 +34,6 @@ def newton_step(state, fun, grad, hess):
                  x, f, state, fun, grad, hess)
     return new_state
 
-def scan(f, init, xs, length=None):
-    if xs is None:
-        xs = [None] * length
-    carry = init
-    ys = []
-    for x in xs:
-        carry, y = f(carry, x)
-        ys.append(y)
-    return carry, np.stack(ys)
-
 @partial(jax.jit, static_argnames=['niter'])
 def newton(x0, f, grad, hess, niter = 10):
     state = NewtonState(x0, f(x0), grad(x0), hess(x0), 1.0)
@@ -54,4 +45,5 @@ def newton_factory(f, niter=5):
     fp = Partial(f)
     grad = Partial(jax.grad(f))
     hess = Partial(jax.hessian(f))
-    return partial(newton, f=fp, grad=grad, hess=hess)
+    return partial(newton, f=fp, grad=grad, hess=hess, niter=niter)
+
