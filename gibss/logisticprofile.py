@@ -235,8 +235,12 @@ def logistic_susie(X, y, L=5, prior_variance=1, maxiter=10, tol=1e-3, method='he
         serfun = partial(logistic_ser_hermite, m=m)
     elif method == 'wakefield':
         serfun = logistic_ser_wakefield
+    elif method == 'wakefield_eb':
+        serfun = logistic_ser_wakefield_eb
     elif method == 'lapmle':
         serfun = logistic_ser_lapmle
+    elif method == 'lapmle_eb':
+        serfun = logistic_ser_lapmle_eb
     else:
         raise ValueError(f"Unknown method {method}: must be one of 'hermite', 'wakefield', or 'lapmle'")
     return gibss(X, y, L, prior_variance, maxiter, tol, initialize_coef, serfun)
