@@ -19,7 +19,32 @@ coef_init = initialize_coef(X, y, 0, 1.)
 serfit = logistic_ser_hermite(coef_init, X, y, 0., 1.0, 5)
 
 #%%
+from gibss.logisticprofile import logistic_ser_lapmle
+from gibss.logisticprofile import logistic_ser_lapmle_eb
+serfit_eb = logistic_ser_lapmle_eb(coef_init, X, y, 0., 100.0)
+serfit = logistic_ser_lapmle(coef_init, X, y, 0., 100.0)
+
+#%%
+from gibss.logisticprofile import logistic_ser_wakefield
+from gibss.logisticprofile import logistic_ser_wakefield_eb
+serfit_eb_wakefield = logistic_ser_lapmle_eb(coef_init, X, y, 0., 100.0)
+serfit_wakefield = logistic_ser_lapmle(coef_init, X, y, 0., 100.0)
+
+#%%
+y2 = np.random.binomial(1, np.mean(y) * np.ones_like(y))
+serfit_eb = logistic_ser_lapmle_eb(coef_init, X, y2, 0., 100.0)
+serfit = logistic_ser_lapmle(coef_init, X, y2, 0., 100.0)
+
+#%%
+susiefit = logistic_susie(X, y, L=1, maxiter=1, tol=1e-5)
+susiedict = todict(susiefit) 
+
+#%%
 susiefit = logistic_susie(X, y, L=3, maxiter=50, tol=1e-5)
+susiedict = todict(susiefit) 
+
+#%%
+susiefit = logistic_susie(X, y, L=10, maxiter=50, tol=1e-5)
 susiedict = todict(susiefit) 
 
 # %%
