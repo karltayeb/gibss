@@ -9,7 +9,7 @@ def gibss(X, y, L=5, prior_variance=1.0, maxiter=100, tol=1e-3, initfun = None, 
         # TODO: maybe there should be a `params` attribute to component
         # that way we don't depend on the details of how the component is fit
         coef_init = old_component.fits.state.x
-        return serfun(coef_init, X, y, psi, prior_variance)
+        return serfun(coef_init, X, y, psi, old_component.prior_variance)
     coef_init = initfun(X, y, 0., prior_variance)
 
     # first iteration to build up the components
