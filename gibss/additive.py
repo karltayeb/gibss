@@ -13,7 +13,7 @@ class Monitor:
 
     def monitor(self, new_components):
         new_psi = [c.psi for c in new_components]
-        diffs = [np.max(np.abs(psi1 - psi2)) for psi1, psi2 in zip(self.psi, new_psi)]
+        diffs = np.array([np.max(np.abs(psi1 - psi2)) for psi1, psi2 in zip(self.psi, new_psi)])
         print(f'Max diffs: {diffs}')
         if np.max(diffs) < self.tol:
             self.converged = True
@@ -52,14 +52,13 @@ def additive_model(psi_init: Array, components: List[Any], fit_functions: List[C
     i = 0  # case: maxiter = 1
     for i in range(maxiter-1):
         print(f'Iteration {i}')
-        new_components = []
         for j, fun in enumerate(fit_functions):
             print(f'\tUpdating component {j}')
             psi = psi - components[j].psi
-            new_components.append(fun(psi, components[j]))
-            psi = psi + new_components[j].psi
-        monitor.monitor(new_components)
-        components = new_components
+            # new_components.append(fun(psi, components[j]))
+            components[j] = fun(psi, components[j])
+            psi = psi + components[j].psi
+        monitor.monitor(components)
         if monitor.converged:
             break
      
