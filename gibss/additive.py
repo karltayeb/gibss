@@ -4,6 +4,7 @@ import numpy as np
 from dataclasses import dataclass
 import jax
 from functools import partial
+from tqdm import tqdm
 
 class Monitor:
     def __init__(self, components, tol=1e-3):
@@ -50,10 +51,9 @@ def additive_model(psi_init: Array, components: List[Any], fit_functions: List[C
     # subsequent iterations: add and subtract
     psi = psi_init
     i = 0  # case: maxiter = 1
-    for i in range(maxiter-1):
+    for i in tqdm(range(maxiter-1)):
         print(f'Iteration {i}')
-        for j, fun in enumerate(fit_functions):
-            print(f'\tUpdating component {j}')
+        for j, fun in tqdm(enumerate(fit_functions), leave=False):
             psi = psi - components[j].psi
             # new_components.append(fun(psi, components[j]))
             components[j] = fun(psi, components[j])

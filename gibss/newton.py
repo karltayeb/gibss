@@ -40,7 +40,7 @@ def newton_step(state, fun, grad, hess):
     def f1(x, dir, f, fcur):
         g = grad(x)
         H = hess(x)
-        nd = -(g @ dir)/2
+        nd = (g @ H @ g)/2
         return NewtonState(
             x, f, g, H, -jax.scipy.linalg.solve(H, g), 
             1.,
@@ -48,7 +48,7 @@ def newton_step(state, fun, grad, hess):
             state.alpha, state.gamma,
             state.maxiter, state.iter + 1
         )
-    # halve stepsize if objective does not decrease
+    # shrink stepsize by factro alpha if objective does not decrease
     def f2(x, dir, f, fcur):
         return NewtonState(
             state.x, state.f, state.g, state.h, state.direction, 
@@ -62,8 +62,7 @@ def newton_step(state, fun, grad, hess):
     # new_state = jax.lax.cond(True, f1, f2, x, f, state.f)
     return new_state
 
-@partial(jax.jit)
-def newton(x0, fun, grad, hess, tol=1e-3, maxiter=10, alpha=0.5, gamma=-jnp.inf):
+def newton(x0, fun, grad, hess, tol=1e-3, maxiter=10, alpha=0.5, gamma=-0.1):
     def converged_or_maxiter_reached(state):
         return jax.lax.cond(
             (state.nd <= state.tol)| (state.iter >= state.maxiter),
@@ -97,6 +96,23 @@ def newton_factory(f: Callable, maxiter: int=50, tol: float=1e-3, alpha: float=0
     grad = Partial(jax.grad(f))
     hess = Partial(jax.hessian(f))
     return partial(newton, fun=fp, grad=grad, hess=hess, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma)
+
+@partial(jax.jit)
+def newton_lite(x0, fun, grad, hess, tol=0, niter=10, alpha=0.5, gamma=0.):
+    body_fun = Partial(newton_step, fun=fun, grad=grad, hess=hess)
+    f = fun(x0)
+    g = grad(x0)
+    H = hess(x0)
+    direction = -jax.scipy.linalg.solve(H, g)
+    state = NewtonState(x0, f, g, H, direction, 1.0, np.inf, tol, False, alpha, gamma, niter, 0)
+    state = jax.lax.fori_loop(0, niter, lambda i, s: body_fun(s), state)
+    return state
+
+def newton_lite_factory(f: Callable, niter: int=10, tol: float=1e-3, alpha: float=0.5, gamma: float=-jnp.inf) -> Callable:
+    fp = Partial(f)
+    grad = Partial(jax.grad(f))
+    hess = Partial(jax.hessian(f))
+    return partial(newton_lite, fun=fp, grad=grad, hess=hess, niter=niter, tol=tol, alpha=alpha, gamma=gamma)
 
 def newton_save_iterates(x0, fun, niter=10):
     grad = jax.grad(fun)
