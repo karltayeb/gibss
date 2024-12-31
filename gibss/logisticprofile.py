@@ -15,12 +15,13 @@ from gibss.gd_backtracking import gd_factory
 from gibss.gibss import gibss
 
 @partial(jax.tree_util.register_dataclass,
-         data_fields=['logp', 'lbf', 'beta', 'state'], meta_fields=[])
+         data_fields=['logp', 'lbf', 'beta', 'prior_variance', 'state'], meta_fields=[])
 @dataclass
 class UnivariateRegression:
     logp: float
     lbf: float
     beta: float
+    prior_variance: float
     state: Any
 
 @jax.jit
@@ -66,7 +67,7 @@ def wakefield(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=
     # with a normal prior
     beta = params[1] * prior_variance / (s2 + prior_variance)
     # NOTE: the value for logp might not make sense
-    return UnivariateRegression(lbf + nullfit.logp, lbf, beta, state)
+    return UnivariateRegression(lbf + nullfit.logp, lbf, beta, prior_variance, prior_variance, state)
 
 def estimate_prior_variance_wakefield(fits, prior_variance_init):
     """Estimate prior variance using Wakefield approximation"""
@@ -90,7 +91,7 @@ def update_prior_variance_wakefield(fit: UnivariateRegression, prior_variance: f
     # compute wakefield lbf
     lbf = compute_wakefield_lbf(betahat, s2, prior_variance)
     beta = betahat * prior_variance / (s2 + prior_variance)
-    return UnivariateRegression(lbf + ll0, lbf, beta, fit.state)
+    return UnivariateRegression(lbf + ll0, lbf, beta, prior_variance, fit.state)
 
 # def compute_lapmle_logp(ll, betahat, tau1, tau):
 #     logp = ll + \
@@ -118,7 +119,7 @@ def laplace_mle(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, to
     logp = compute_lapmle_logp(ll, betahat, s2, prior_variance)
     lbf = logp - nullfit.logp
     beta = betahat * prior_variance / (s2 + prior_variance)
-    return UnivariateRegression(logp, lbf, beta, state)
+    return UnivariateRegression(logp, lbf, beta, prior_variance, state)
 
 def compute_lbf_score(x, y, offset, nullfit, prior_variance):
     # evaluate the gradient and the hessian at the null
@@ -145,7 +146,7 @@ def update_prior_variance_lapmle(fit: UnivariateRegression, prior_variance: floa
     logp = compute_lapmle_logp(ll, betahat, s2, prior_variance)
     lbf = fit.lbf - fit.logp + logp
     beta = betahat * prior_variance / (s2 + prior_variance)
-    return UnivariateRegression(logp, lbf, beta, fit.state)
+    return UnivariateRegression(logp, lbf, beta, prior_variance, fit.state)
     
 
 def estimate_prior_variance_lapmle(fits: UnivariateRegression, prior_variance_init: float) -> float:
@@ -181,10 +182,45 @@ def hermite_factory(m):
         # compute posterior mean of effect
         y2 = nodes * jnp.exp(y - logp)
         beta = jnp.sum(y2/norm.pdf(nodes, loc=mu, scale=sigma) * weights)
-        return UnivariateRegression(logp, lbf, beta, state)
+        return UnivariateRegression(logp, lbf, beta, prior_variance, state)
     
     hermite_jit = jax.jit(hermite)
     return hermite_jit
+
+
+def hermite_grid_factory(m):
+    base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
+    def hermite_grid(coef_init, x, y, offset, nullfit, prior_variance_grid, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+        def hermite_inner(coef_init, prior_variance):
+            solver = newton_factory(
+                Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance),
+                maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma
+            )
+            state = solver(coef_init)
+            params = state.x
+            hessian = -state.h
+        
+            # set up quadrature
+            mu = params[1]
+            sigma = jnp.sqrt(-1/hessian[1,1])
+            nodes = base_nodes * jnp.sqrt(2) * sigma + mu
+            weights = base_weights / jnp.sqrt(jnp.pi)
+        
+            # compute logp
+            coef_nodes = jnp.stack([jnp.ones_like(nodes) * params[0], nodes], axis=1)
+            nll = -nloglik_vmap(coef_nodes, x, y, offset, prior_variance)
+            logp = jax.scipy.special.logsumexp(nll - norm.logpdf(nodes, loc=mu, scale=sigma) + jnp.log(weights)) 
+            lbf = logp - nullfit.logp
+        
+            # compute posterior mean of effect
+            tmp = nodes * jnp.exp(nll - logp)
+            beta = jnp.sum(tmp/norm.pdf(nodes, loc=mu, scale=sigma) * weights)
+            return state.x, UnivariateRegression(logp, lbf, beta, prior_variance, state)
+            
+        res = jax.lax.scan(hermite_inner, coef_init, prior_variance_grid)
+        return(res[1])
+    return(jax.jit(hermite_grid))
+
 
 @jax.jit
 def nloglik0(b0, y, offset):
@@ -192,6 +228,7 @@ def nloglik0(b0, y, offset):
     psi = offset + b0
     ll = jnp.sum(y * psi - jnp.logaddexp(0, psi))
     return -ll
+
 
 @jax.jit
 def fit_null(y, offset, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
@@ -201,7 +238,7 @@ def fit_null(y, offset, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
     solver = newton_factory(Partial(nloglik0, y=y, offset=offset), maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma)
     state = solver(jnp.zeros(1))
     params = state.x    
-    return UnivariateRegression(-state.f, 0, state.x[0], state)
+    return UnivariateRegression(-state.f, 0, state.x[0], 0., state)
 
 
 # use Partial so that you can pass to jitted ser function
