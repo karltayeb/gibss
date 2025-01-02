@@ -248,20 +248,24 @@ def logistic_ser_wakefield(coef_init, X, y, offset, prior_variance, maxiter=50, 
     vwakefield = jax.vmap(Partial(wakefield, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
     return ser(coef_init, X, y, offset, vwakefield, fit_null)
 
+
 @jax.jit
 def logistic_ser_wakefield_eb(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
     # 1. fit ser, choice of prior variance doesn't matter
     nullfit = fit_null(y, offset)
     vwakefield = jax.vmap(Partial(wakefield, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
+
     fits = vwakefield(coef_init, X, y, offset, nullfit)
     prior_variance = estimate_prior_variance_wakefield(fits, prior_variance)
     fits2 = update_prior_variance_wakefield(fits, prior_variance)
     return _ser(fits2, X)
 
+
 @jax.jit
 def logistic_ser_lapmle(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
     vlapmle = jax.vmap(Partial(laplace_mle, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
     return ser(coef_init, X, y, offset, vlapmle, fit_null)
+
 
 @jax.jit
 def logistic_ser_lapmle_eb(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
@@ -281,22 +285,27 @@ def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m, maxiter=50,
 
 
 @partial(jax.jit, static_argnames = ['m', 'maxiter'])
-def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, maxiter=5, tol=1e-3, alpha=0.5, gamma=-0.1):
     vhermite = jax.vmap(Partial(hermite_grid_factory(m), 
                                 prior_variance_grid = prior_variance_grid, 
                                 maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma),
                         in_axes=(0, 0, None, None, None))
     nullfit = fit_null(y, offset)  # fit null model
-    gridfits = vhermite(jnp.zeros((X.shape[0], 2)), X, y, offset, nullfit)  # fit univariate models 
-    best_prior_variance = jax.scipy.special.logsumexp(gridfits.lbf - jnp.log(X.shape[0]), axis=0).argmax()
+    # initialize with null coef
+    p = X.shape[0]
+    coef_init = jnp.stack([jnp.ones(p) * nullfit.state.x, jnp.zeros(p)], axis=1)
+    gridfits = vhermite(coef_init, X, y, offset, nullfit)  # fit univariate models 
+
+    # select best prior variance
+    best_prior_variance = jax.scipy.special.logsumexp(gridfits.lbf, axis=0).argmax()
     fits = jax.tree.map(lambda x: x[:, best_prior_variance], gridfits)
     return _ser(fits, X)
-
 
 
 def initialize_coef(X, y, offset):
     """Initialize univarate regression coefficients using null model"""
     return jnp.zeros((X.shape[0], 2)) 
+
 
 def logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs: dict = {'prior_variance': 1.}):
     if method == 'hermite':
