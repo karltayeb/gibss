@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from gibss.newton import newton_factory
 from gibss.gd_backtracking import gd_factory
 from gibss.gibss import gibss
+from gibss.susie import fit_susie, cleanup_susie_fit 
 
 @partial(jax.tree_util.register_dataclass,
          data_fields=['logp', 'lbf', 'beta', 'prior_variance', 'state'], meta_fields=[])
@@ -124,13 +125,12 @@ def laplace_mle(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, to
 def compute_lbf_score(x, y, offset, nullfit, prior_variance):
     # evaluate the gradient and the hessian at the null
     b = jnp.array([nullfit.beta, 0.])
-    grad = jax.grad(nloglik)(b, x, y, 0., 1.)    
-    hess = jax.hessian(nloglik)(b, x, y, 0., 1.)
+    grad = jax.grad(nloglik)(b, x, y, 0., prior_variance)    
+    hess = jax.hessian(nloglik)(b, x, y, 0., prior_variance)
 
     # approximate the log BF with a quadratic approximation of log p(y, b) about b=0
-    tau0 = 1 / prior_variance
     tau = jnp.linalg.det(hess) / hess[0, 0]  # 1 / H^{-1}_{11}
-    lbf = -0.5 * jnp.log(tau / tau0) + 0.5 * grad[1]**2 / tau
+    lbf = 0.5 * jnp.log(2 * jnp.pi) -0.5 * jnp.log(tau) + 0.5 * grad[1]**2 / tau
     return lbf    
     
 @partial(jax.vmap, in_axes=(0, None))
@@ -280,14 +280,29 @@ def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m, maxiter=50,
     return ser(coef_init, X, y, offset, vhermite, fit_null)
 
 
+@partial(jax.jit, static_argnames = ['m', 'maxiter'])
+def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+    vhermite = jax.vmap(Partial(hermite_grid_factory(m), 
+                                prior_variance_grid = prior_variance_grid, 
+                                maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma),
+                        in_axes=(0, 0, None, None, None))
+    nullfit = fit_null(y, offset)  # fit null model
+    gridfits = vhermite(jnp.zeros((X.shape[0], 2)), X, y, offset, nullfit)  # fit univariate models 
+    best_prior_variance = jax.scipy.special.logsumexp(gridfits.lbf - jnp.log(X.shape[0]), axis=0).argmax()
+    fits = jax.tree.map(lambda x: x[:, best_prior_variance], gridfits)
+    return _ser(fits, X)
+
+
+
 def initialize_coef(X, y, offset):
     """Initialize univarate regression coefficients using null model"""
-    return np.zeros((X.shape[0], 2)) 
-
+    return jnp.zeros((X.shape[0], 2)) 
 
 def logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs: dict = {'prior_variance': 1.}):
     if method == 'hermite':
         serfun = partial(logistic_ser_hermite, **serkwargs)
+    if method == 'hermite_eb':
+        serfun = partial(logistic_ser_hermite_grid, **serkwargs)
     elif method == 'wakefield':
         serfun = partial(logistic_ser_wakefield, **serkwargs)
     elif method == 'wakefield_eb':
@@ -299,3 +314,37 @@ def logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs:
     else:
         raise ValueError(f"Unknown method {method}: must be one of 'hermite', 'wakefield', or 'lapmle'")
     return gibss(X, y, L, maxiter, tol, initialize_coef, serfun)
+
+def fit_logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs: dict = dict(), cleanup=True):
+    match method:
+        case 'hermite':
+            initfun = initialize_coef
+            serkwargs2 = dict(m=1, prior_variance=1.)
+            serkwargs2.update(serkwargs)
+            serfun = partial(logistic_ser_hermite, **serkwargs2)
+        case 'hermite_eb':
+            initfun = initialize_coef
+            serkwargs2 = dict(m=1, prior_variance_grid=jnp.array([0.0001, 0.001, 0.01, 0.1, 1., 10., 100.]))
+            serkwargs2.update(serkwargs)
+            serfun = partial(logistic_ser_hermite_grid, **serkwargs2)
+        case 'wakefield':
+            initfun = initialize_coef
+            serfun = partial(logistic_ser_wakefield, **serkwargs)
+        case 'wakefield_eb':
+            initfun = initialize_coef
+            serfun = partial(logistic_ser_wakefield_eb, **serkwargs)
+        case 'laplace_mle':
+            initfun = initialize_coef
+            serfun = partial(logistic_ser_lapmle, **serkwargs)
+        case 'laplace_mle_eb':
+            initfun = initialize_coef
+            serfun = partial(logistic_ser_lapmle_eb, **serkwargs)
+    
+    # fit SuSiE via GIBSS
+    fit, state = fit_susie(X, y, L, serfun, initfun, serkwargs, tol, maxiter) 
+    # optionally, format resutlts into R-friendly format
+    if cleanup:
+        fit = cleanup_susie_fit(fit, state)
+    return fit
+
+
