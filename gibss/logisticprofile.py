@@ -50,7 +50,7 @@ def compute_wakefield_lbf(betahat, s2, prior_variance):
         - norm.logpdf(betahat, loc=0, scale=jnp.sqrt(s2))
     return lbf
 
-def wakefield(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def wakefield(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma)
     state = solver(coef_init)
     params = state.x
@@ -106,7 +106,7 @@ def compute_lapmle_logp(ll, betahat, s2, prior_variance):
         norm.logpdf(betahat, loc=0, scale=jnp.sqrt(s2 + prior_variance))
     return logp
 
-def laplace_mle(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def laplace_mle(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     solver = newton_factory(Partial(nloglik_mle, x=x, y=y, offset=offset), maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma)
     state = solver(coef_init)
     params = state.x
@@ -161,7 +161,7 @@ def estimate_prior_variance_lapmle(fits: UnivariateRegression, prior_variance_in
 # gauss-hermite quadrature nodes and weights
 def hermite_factory(m):
     base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
-    def hermite(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+    def hermite(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
         solver = newton_factory(Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance), maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma)
         state = solver(coef_init)
         params = state.x
@@ -190,7 +190,7 @@ def hermite_factory(m):
 
 def hermite_grid_factory(m):
     base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
-    def hermite_grid(coef_init, x, y, offset, nullfit, prior_variance_grid, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+    def hermite_grid(coef_init, x, y, offset, nullfit, prior_variance_grid, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
         def hermite_inner(coef_init, prior_variance):
             solver = newton_factory(
                 Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance),
@@ -231,7 +231,7 @@ def nloglik0(b0, y, offset):
 
 
 @jax.jit
-def fit_null(y, offset, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def fit_null(y, offset, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     """Logistic SER"""
     # we fit null model by giving a covariate with no variance and setting prior variance to ~=0
     # so that we can just reuse the code for fitting the full model
@@ -244,13 +244,13 @@ def fit_null(y, offset, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
 # use Partial so that you can pass to jitted ser function
 # see https://jax.readthedocs.io/en/latest/_autosummary/jax.tree_util.Partial.html
 @partial(jax.jit, static_argnames = ['maxiter'])
-def logistic_ser_wakefield(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_wakefield(coef_init, X, y, offset, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     vwakefield = jax.vmap(Partial(wakefield, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
     return ser(coef_init, X, y, offset, vwakefield, fit_null)
 
 
 @jax.jit
-def logistic_ser_wakefield_eb(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_wakefield_eb(coef_init, X, y, offset, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     # 1. fit ser, choice of prior variance doesn't matter
     nullfit = fit_null(y, offset)
     vwakefield = jax.vmap(Partial(wakefield, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
@@ -262,13 +262,13 @@ def logistic_ser_wakefield_eb(coef_init, X, y, offset, prior_variance, maxiter=5
 
 
 @jax.jit
-def logistic_ser_lapmle(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_lapmle(coef_init, X, y, offset, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     vlapmle = jax.vmap(Partial(laplace_mle, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
     return ser(coef_init, X, y, offset, vlapmle, fit_null)
 
 
 @jax.jit
-def logistic_ser_lapmle_eb(coef_init, X, y, offset, prior_variance, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_lapmle_eb(coef_init, X, y, offset, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     # 1. fit ser, choice of prior variance doesn't matter
     nullfit = fit_null(y, offset)
     vlapmle = jax.vmap(Partial(laplace_mle, prior_variance=prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
@@ -279,13 +279,13 @@ def logistic_ser_lapmle_eb(coef_init, X, y, offset, prior_variance, maxiter=50, 
 
 
 @partial(jax.jit, static_argnames = ['m', 'maxiter'])
-def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m, maxiter=50, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
     vhermite = jax.vmap(Partial(hermite_factory(m), prior_variance = prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
     return ser(coef_init, X, y, offset, vhermite, fit_null)
 
 
 @partial(jax.jit, static_argnames = ['m', 'maxiter'])
-def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, maxiter=5, tol=1e-3, alpha=0.5, gamma=-0.1):
+def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, maxiter=5, tol=0.1, alpha=0.1, gamma=-0.1):
     vhermite = jax.vmap(Partial(hermite_grid_factory(m), 
                                 prior_variance_grid = prior_variance_grid, 
                                 maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma),
@@ -307,7 +307,7 @@ def initialize_coef(X, y, offset):
     return jnp.zeros((X.shape[0], 2)) 
 
 
-def logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs: dict = {'prior_variance': 1.}):
+def logistic_susie(X, y, L=5, maxiter=10, tol=0.1, method='hermite', serkwargs: dict = {'prior_variance': 1.}):
     if method == 'hermite':
         serfun = partial(logistic_ser_hermite, **serkwargs)
     if method == 'hermite_eb':
@@ -324,7 +324,7 @@ def logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs:
         raise ValueError(f"Unknown method {method}: must be one of 'hermite', 'wakefield', or 'lapmle'")
     return gibss(X, y, L, maxiter, tol, initialize_coef, serfun)
 
-def fit_logistic_susie(X, y, L=5, maxiter=10, tol=1e-3, method='hermite', serkwargs: dict = dict(), cleanup=True):
+def fit_logistic_susie(X, y, L=5, maxiter=10, tol=0.1, method='hermite', serkwargs: dict = dict(), cleanup=True):
     match method:
         case 'hermite':
             initfun = initialize_coef
