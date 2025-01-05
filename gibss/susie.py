@@ -88,48 +88,6 @@ def make_ser_fitfun(X: np.ndarray, y: np.ndarray, serfun: Callable, initfun: Cal
     return serfitfun, serfitfun2
 
 
-def fit_susie_jax(X: np.ndarray, y: np.ndarray, L: int, serfun: Callable, initfun: Callable, serkwargs: dict, tol=1e-3, maxiter=10) -> Any:
-    # initialization
-    X = ensure_dense_and_float(X)
-    y = ensure_dense_and_float(y)
-    fitfun = make_ser_fitfun(X, y, serfun, initfun, serkwargs)
-    psi_init = jnp.zeros_like(y).astype(float)
-
-    # forward selection
-    def f1(psi, x):
-        """
-        forward selection scan
-        """
-        serfit = fitfun(psi)
-        psi2 = psi + serfit.psi
-        return psi2, serfit
-    psi, components = jax.lax.scan(f1, psi_init, np.arange(L))
-
-    # run gibss
-    def f2(psi, serfit):
-        """
-        subsequent iterations need to remove predictions first
-        """
-        psi2 = psi - serfit.psi
-        serfit2 = fitfun(psi2)
-        psi3 = psi2 + serfit2.psi
-        return psi3, serfit2
-    
-    def update_sers(val):
-        state, (psi1, components1) = val
-        psi2, components2 = jax.lax.scan(f2, psi1, components1)
-
-        # update the optimization state
-        diff = jnp.abs(psi2 - psi1).max()
-        state2 = AdditiveState(state.tol, diff < state.tol, state.maxiter, state.iter + 1)
-        return state2, (psi2, components2)
-
-    state = AdditiveState(tol, False, maxiter, 1) # forward initialization is 1 iter
-    init_val = (state, (psi, components))
-    final_state, (final_psi, final_components) = jax.lax.while_loop(check_not_converged, update_sers, init_val)
-    return final_components, final_state
-
-
 def tree_stack(trees):
     # https://gist.github.com/willwhitney/dd89cac6a5b771ccff18b06b33372c75
     return jax.tree.map(lambda *v: jnp.stack(v), *trees)
