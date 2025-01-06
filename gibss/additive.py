@@ -24,15 +24,17 @@ class Monitor:
         print(f'Converged: {self.converged} at tolerance {self.tol}')
 
 
-@partial(jax.tree_util.register_dataclass, data_fields=['components', 'monitor', 'iter'], meta_fields=[])
+# @partial(jax.tree_util.register_dataclass, data_fields=['psi', 'components', 'fit_functions', 'monitor', 'iter'], meta_fields=[])
 @dataclass
 class AdditiveModel:
+    psi: Array
     components: List[Any]
+    fit_functions: List[Any]
     monitor: Monitor
     iter: int
 
 # Implement an additive model
-def additive_model(psi_init: Array, components: List[Any], fit_functions: List[Callable], maxiter=100, monitor=None):
+def update_additive_model(model: AdditiveModel, maxiter=100):
     """Additive mode
 
     Args:
@@ -44,23 +46,17 @@ def additive_model(psi_init: Array, components: List[Any], fit_functions: List[C
     Returns:
         _type_: _description_
     """
-
-    # initialize monitor if not provided
-    monitor =  Monitor(components) if monitor is None else monitor
-
     # subsequent iterations: add and subtract
-    psi = psi_init
-    i = 0  # case: maxiter = 1
-    for i in tqdm(range(maxiter-1)):
-        print(f'Iteration {i}')
+    psi = model.psi
+    components = model.components
+    fit_functions = model.fit_functions
+    monitor = model.monitor
+    for i in tqdm(range(maxiter)):
         for j, fun in tqdm(enumerate(fit_functions), leave=False):
             psi = psi - components[j].psi
             # new_components.append(fun(psi, components[j]))
             components[j] = fun(psi, components[j])
             psi = psi + components[j].psi
-        monitor.monitor(components)
         if monitor.converged:
             break
-     
-    monitor.report()
-    return AdditiveModel(components, monitor, i+1)
+    return AdditiveModel(psi, components, fit_functions, monitor, model.iter + i + 1)
