@@ -5,9 +5,12 @@ At it's core GIBSS is fitting an additive model. Each component of the additive 
 When we fit SuSiE via GIBSS, each component corresponds to an SER, and $\psi_l$ are the posterior means of the linear predictor $\mathbb E [X b]$. However, there is no requirement that the additive model consist of homogenous components. For example, we might include an additive component for the intercept and any other covariates that we want to include in the model.
 
 
-### Additive model interface
+## Additive model interface
 
-`fit_additive(fitfuns: List[Callable], tol: float=1e-3, maxiter: int=10, keep_intermediate=False) -> (List[Any], AdditiveState)`
+```
+fit_additive(fitfuns: List[Callable], tol: float=1e-3, maxiter: int=10, keep_intermediate=False) -> (List[Any], AdditiveState)
+```
+
 
 A minimal version of this function could be implemented as
 
@@ -36,39 +39,69 @@ There are a few features we add.
 - When the argument `keep_intermediate = True` the function will save all the intermediate states of `components` after each run of the loop.
 - We also add arguments for controlling how convergence is monitored. 
 
-### Using `fit_additive` to fit new SuSiE models
+## Using `fit_additive` to fit new SuSiE models
 
-We will assume that we have a function for fitting a single effect regression.
-The details of how this function are implemented are unimportant, except that it takes as an argument an offset. This is important because each additive component should be sensitive to the contributions of the other components.
+The functions that we can pass to `fit_additive` need to have a specific type signature 
 
-For example, we will use `gibss.logistic.logistic_ser_hermite`. This function implements the logistic single effect regression. It has a signature `logistic_ser_hermite(coef_init, X, y, offset, m=1, prior_variance=1.0, newtonkwargs=dict())`. 
+```py
+def fun(psi: Array, fit: Union[Fit, None]) -> Fit
+```
+Where `Fit` type represents the output of the fit function.
+Importantly, it must be able to handle the case where `fit = None`, as is the case in the first iteration.
+The function must know what data, parameters, etc should be used.
 
-To construct a valid `fitfun` for use with `fit_additive` we will construct a new function that handles initialization of `coef_init` from the value provided for `old_fit`, and evaluates `logistic_ser_hermite` with this initialization, the data, and other arguments at a given choice of `psi`. 
 
-``` py
-def make_fitfun(X, y, **kwargs):
-	def fitfun(psi: Array, old_fit: Union[AdditiveComponent, None]):
-		# 1. handle different initializations
-		if old_fit is None:
-			# initialize the coefficients, e.g. using the data (X, y)
-			coef_init = ... 
-		else:
-			# optinally, provide a different initialization if we already have a fit AdditiveComponent
-			coef_init = ... 
-		# 2. return partial evaluation
-		return logistic_ser_hermite(coef_init, X, y, psi, **kwargs)
-		
-	return fitfun
+To facilitate the development of new additive models, we provide a helper function for building functions that are compatible with `additive_model`
+
+``` py 
+def make_fitfun(X: np.ndarray, y: np.ndarray, fun: Callable, initfun: Callable, kwargs: dict) -> Callable:
+    """
+    Produces a function for fitting an additive component using the provided data and settings. 
+    The returned function has a signature compatible with the additive_model interface.
+
+    Args:
+        X (np.ndarray): A p x n matrix where p is the number of variables and n is the number of observations.
+        y (np.ndarray): An n-dimensional vector of observations corresponding to the rows of X.
+        fun (Callable): A function that takes `coef_init`, `X`, `y`, `psi`, and possibly other arguments specified in `kwargs`.
+        initfun (Callable): A function with the signature `(X, y, psi, fit) -> Array` used to initialize `coef_init`. 
+                            It must be able to handle `fit` as `None`.
+        kwargs (dict): A dictionary of additional keyword arguments to pass to `fun`.
+
+    Returns:
+        Callable: A function `fitfun(psi: Array, fit: Union[None, Fit]) -> Fit`, used to fit the SER model.
+    """
+    @jax.jit
+    def fitfun(psi, fit):
+        coef_init = initfun(X, y, psi, fit)
+        return fun(
+            coef_init = coef_init,
+            X = X, y=y, offset = psi,
+            **kwargs
+        )
+    return fitfun
 ```
 
-Then a basic implementation of logistic SuSiE looks like
+`make_fitfun` assumes that the function `fun` has positional arguments `coef_init`, `X`, `y``, and `psi`. Other arguments can be specified in the dictionary `kwargs` which will be passed as keyword arguments to `fun`. 
 
+
+For example we could construct a function for fitting the logistic SER with
 ``` py
-def logistic_susie_simple(X, y, L):
-	fitfun = makefitfun(X, y)
-	fitfuns = [fitfun for _ in range(L)]
-	components, state = fit_additive(fitfuns)
-	return components, state
+from gibss.logistic import logistic_ser_hermite
+
+initfun = lambda X, y, psi, fit: jnp.zeros((X.shape[0], 1))
+fitfun = make_fitfun(X, y, logistic_ser_hermite, initfun)
+fitfun(0., None)
 ```
 
-This framework makes it simple to implement new variations of SuSiE. Want to do SuSiE with a new likelihood? Implement the SER for that likelihood and iterate in the additive model. Want to estimate the prior variance? Implement a version of the SER that does that. Want to include fixed effects in the model? Implement a separate additive component that handles estimation of the fixed effect (this is how we handle the intercept in `gibss.logistic`). 
+And fit an additive model (logistic SuSiE) with
+
+``` py
+fitfuns = [fitfun for _ in range(5)]
+fit, state = additive_model(fitfuns)
+```
+
+This framework makes it simple to implement new variations of SuSiE. 
+
+* Want to do SuSiE with a new likelihood? Implement the SER for that new likelihood. We have implementations for logistic regression and the Cox proportional hazards model.
+* Want to estimate the prior variance? Implement a version of the SER that does that. 
+* Want to include fixed effects in the model? Implement a separate additive component that handles estimation of the fixed effect. This is how we handle the intercept in `gibss.logistic.fit_logistic_susie`. 
