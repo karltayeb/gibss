@@ -11,9 +11,8 @@ from jax.tree_util import Partial
 from typing import Any
 from dataclasses import dataclass
 from gibss.newton import newton_factory
-from gibss.gd_backtracking import gd_factory
-from gibss.gibss import gibss
-from gibss.susie import fit_susie, cleanup_susie_fit 
+from gibss.additive import fit_additive_model, make_fitfun
+from gibss.utils import tree_stack
 
 @partial(jax.tree_util.register_dataclass,
          data_fields=['logp', 'lbf', 'beta', 'prior_variance', 'state'], meta_fields=[])
@@ -161,8 +160,8 @@ def estimate_prior_variance_lapmle(fits: UnivariateRegression, prior_variance_in
 # gauss-hermite quadrature nodes and weights
 def hermite_factory(m):
     base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
-    def hermite(coef_init, x, y, offset, nullfit, prior_variance, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
-        solver = newton_factory(Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance), maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma)
+    def hermite(coef_init, x, y, offset, nullfit, prior_variance, newtonkwargs=dict(maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1)):
+        solver = newton_factory(Partial(nloglik, x=x, y=y, offset=offset, prior_variance=prior_variance), **newtonkwargs)
         state = solver(coef_init)
         params = state.x
         hessian = -state.h
@@ -278,9 +277,9 @@ def logistic_ser_lapmle_eb(coef_init, X, y, offset, prior_variance, maxiter=50, 
     return _ser(fits2, X)
 
 
-@partial(jax.jit, static_argnames = ['m', 'maxiter'])
-def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m, maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1):
-    vhermite = jax.vmap(Partial(hermite_factory(m), prior_variance = prior_variance, maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma), in_axes=(0, 0, None, None, None))
+@partial(jax.jit, static_argnames = ['m'])
+def logistic_ser_hermite(coef_init, X, y, offset, prior_variance, m, newtonkwargs=dict(maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1)):
+    vhermite = jax.vmap(Partial(hermite_factory(m), prior_variance = prior_variance, newtonkwargs=newtonkwargs), in_axes=(0, 0, None, None, None))
     return ser(coef_init, X, y, offset, vhermite, fit_null)
 
 
@@ -291,9 +290,6 @@ def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, m
                                 maxiter=maxiter, tol=tol, alpha=alpha, gamma=gamma),
                         in_axes=(0, 0, None, None, None))
     nullfit = fit_null(y, offset)  # fit null model
-    # initialize with null coef
-    p = X.shape[0]
-    coef_init = jnp.stack([jnp.ones(p) * nullfit.state.x, jnp.zeros(p)], axis=1)
     gridfits = vhermite(coef_init, X, y, offset, nullfit)  # fit univariate models 
 
     # select best prior variance
@@ -302,58 +298,71 @@ def logistic_ser_hermite_grid(coef_init, X, y, offset, prior_variance_grid, m, m
     return _ser(fits, X)
 
 
-def initialize_coef(X, y, offset):
+def initialize_coef_zeros(X, y, offset):
     """Initialize univarate regression coefficients using null model"""
     return jnp.zeros((X.shape[0], 2)) 
 
+def initialize_coef_null(X, y, offset):
+    # initialize with null coef
+    nullfit = fit_null(y, offset)  # fit null model
+    p = X.shape[0]
+    coef_init = jnp.stack([jnp.ones(p) * nullfit.state.x, jnp.zeros(p)], axis=1)
+    return coef_init
 
-def logistic_susie(X, y, L=5, maxiter=10, tol=0.1, method='hermite', serkwargs: dict = {'prior_variance': 1.}):
-    if method == 'hermite':
-        serfun = partial(logistic_ser_hermite, **serkwargs)
-    if method == 'hermite_eb':
-        serfun = partial(logistic_ser_hermite_grid, **serkwargs)
-    elif method == 'wakefield':
-        serfun = partial(logistic_ser_wakefield, **serkwargs)
-    elif method == 'wakefield_eb':
-        serfun = partial(logistic_ser_wakefield_eb, **serkwargs)
-    elif method == 'lapmle':
-        serfun = partial(logistic_ser_lapmle, **serkwargs)
-    elif method == 'lapmle_eb':
-        serfun = partial(logistic_ser_lapmle_eb, **serkwargs)
-    else:
-        raise ValueError(f"Unknown method {method}: must be one of 'hermite', 'wakefield', or 'lapmle'")
-    return gibss(X, y, L, maxiter, tol, initialize_coef, serfun)
 
-def fit_logistic_susie(X, y, L=5, maxiter=10, tol=0.1, method='hermite', serkwargs: dict = dict(), cleanup=True):
+def logistic_ser_hermite_init(X, y, psi, fit=None, warm=False):
+    """
+    If fit is None or warm=False initialize with zeros
+    Otherwise, initialize with with current effect estimates from fit.
+    """
+    if ((fit is None) or (not warm)): 
+        coef_init = jnp.zeros((X.shape[0], 2))
+    else:   
+        coef_init = fit.fits.state.x
+    return coef_init
+
+
+# def fit_logistic_susie(X, y, L=5, maxiter=10, tol=0.1, method='hermite', serkwargs: dict = dict(), cleanup=True):
+def fit_logistic_susie(X, y, L=5, method='hermite', warm=True, serkwargs: dict = dict(), **kwargs):
     match method:
         case 'hermite':
-            initfun = initialize_coef
-            serkwargs2 = dict(m=1, prior_variance=1.)
-            serkwargs2.update(serkwargs)
-            serfun = partial(logistic_ser_hermite, **serkwargs2)
+            defaultserkwargs  = dict(
+                prior_variance = float(10.),
+                newtonkwargs=dict(tol=1e-2, maxiter=5, alpha=0.2, gamma=-0.1)
+            )
+            defaultserkwargs.update(serkwargs)
+            fitfun = make_fitfun(X, y, logistic_ser_hermite, Partial(logistic_ser_hermite_init, warm=warm), defaultserkwargs)
         case 'hermite_eb':
-            initfun = initialize_coef
+            initfun = initialize_coef_null
             serkwargs2 = dict(m=1, prior_variance_grid=jnp.array([0.0001, 0.001, 0.01, 0.1, 1., 10., 100.]))
             serkwargs2.update(serkwargs)
             serfun = partial(logistic_ser_hermite_grid, **serkwargs2)
-        case 'wakefield':
-            initfun = initialize_coef
-            serfun = partial(logistic_ser_wakefield, **serkwargs)
-        case 'wakefield_eb':
-            initfun = initialize_coef
-            serfun = partial(logistic_ser_wakefield_eb, **serkwargs)
-        case 'laplace_mle':
-            initfun = initialize_coef
-            serfun = partial(logistic_ser_lapmle, **serkwargs)
-        case 'laplace_mle_eb':
-            initfun = initialize_coef
-            serfun = partial(logistic_ser_lapmle_eb, **serkwargs)
+        case 'hermite_eb':
+            defaultserkwargs = dict(
+                prior_variance_grid = jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1., 2., 4.]),
+                newtonkwargs=dict(tol=1e-2, maxiter=20, alpha=0.8, gamma=-0.1)
+            )
+            defaultserkwargs.update(serkwargs)
+            fitfun = make_fitfun(X, y, logistic_ser_hermite_grid, Partial(logistic_ser_hermite_init, warm=False), defaultserkwargs)
+            if warm:
+                warnings.warn('warm=True not supported for hermite_eb, continuing with warm=False')
+        case _:
+            raise Exception(f'method = {method} is not a valid option')
+
+        # case 'wakefield':
+        #     initfun = initialize_coef_null
+        #     serfun = partial(logistic_ser_wakefield, **serkwargs)
+        # case 'wakefield_eb':
+        #     initfun = initialize_coef_null
+        #     serfun = partial(logistic_ser_wakefield_eb, **serkwargs)
+        # case 'laplace_mle':
+        #     initfun = initialize_coef_null
+        #     serfun = partial(logistic_ser_lapmle, **serkwargs)
+        # case 'laplace_mle_eb':
+        #     initfun = initialize_coef_null
+        #     serfun = partial(logistic_ser_lapmle_eb, **serkwargs)
     
-    # fit SuSiE via GIBSS
-    fit, state = fit_susie(X, y, L, serfun, initfun, serkwargs, tol, maxiter) 
-    # optionally, format resutlts into R-friendly format
-    if cleanup:
-        fit = cleanup_susie_fit(fit, state)
-    return fit
-
-
+    fitfuns = [fitfun for _ in range(L)]
+    model = fit_additive_model(fitfuns, **kwargs)
+    # sers = tree_stack(components)
+    return sers, state
