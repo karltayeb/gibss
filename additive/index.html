@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Additive - GIBSS</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Additive";
+        var mkdocs_page_input_path = "additive.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> GIBSS
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../newton/">Newton</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Additive</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#additive-model-interface">Additive model interface</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#using-fit_additive-to-fit-new-susie-models">Using fit_additive to fit new SuSiE models</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../logistic_susie/">Logistic SuSiE</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">GIBSS</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Additive</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="additive-models">Additive models</h1>
+<p>At it's core GIBSS is fitting an additive model. Each component of the additive model produces a prediction <span class="arithmatex">\(\psi_l\)</span> which contributes to the total predictions <span class="arithmatex">\(\psi = \sum \psi_l\)</span>. We can estimate each component of the additive model in an iterative fashion, estimating one <span class="arithmatex">\(\psi_l\)</span> while holding the other <span class="arithmatex">\(\psi_j\)</span> <span class="arithmatex">\(j \neq l\)</span> fixed.</p>
+<p>When we fit SuSiE via GIBSS, each component corresponds to an SER, and <span class="arithmatex">\(\psi_l\)</span> are the posterior means of the linear predictor <span class="arithmatex">\(\mathbb E [X b]\)</span>. However, there is no requirement that the additive model consist of homogenous components. For example, we might include an additive component for the intercept and any other covariates that we want to include in the model.</p>
+<h2 id="additive-model-interface">Additive model interface</h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>fit_additive(fitfuns: List[Callable], tol: float=1e-3, maxiter: int=10, keep_intermediate=False) -&gt; (List[Any], AdditiveState)
+</span></code></pre></div>
+<p>A minimal version of this function could be implemented as</p>
+<div class="language-py highlight"><span class="filename">fit_additive pseudocode</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span> <span class="nf">fit_additive_core</span><span class="p">(</span><span class="n">fitfuns</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Callable</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="n">List</span><span class="p">[</span><span class="n">AdditiveComponent</span><span class="p">],</span> <span class="n">AdditiveState</span><span class="p">):</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">psi</span> <span class="o">=</span> <span class="mf">0.</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">components</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="k">for</span> <span class="n">fun</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">fitfuns</span><span class="p">,</span> <span class="n">i</span><span class="p">):</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="n">component</span> <span class="o">=</span> <span class="n">fun</span><span class="p">(</span><span class="n">psi</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        <span class="n">psi</span> <span class="o">=</span> <span class="n">psi</span> <span class="o">+</span> <span class="n">component</span><span class="o">.</span><span class="n">psi</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">components</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">component</span><span class="p">)</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="k">while</span> <span class="p">{</span><span class="ow">not</span> <span class="n">converged</span><span class="p">}</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="k">for</span> <span class="n">fun</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">fitfuns</span><span class="p">,</span> <span class="n">i</span><span class="p">):</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>            <span class="n">psi</span> <span class="o">=</span> <span class="n">psi</span> <span class="o">-</span> <span class="n">components</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">psi</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>            <span class="n">components</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">fun</span><span class="p">(</span><span class="n">psi</span><span class="p">,</span> <span class="n">components</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>            <span class="n">psi</span> <span class="o">=</span> <span class="n">psi</span> <span class="o">+</span> <span class="n">components</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">psi</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="k">return</span> <span class="n">components</span><span class="p">,</span> <span class="n">state</span>
+</span></code></pre></div>
+<p><code>fitfuns</code> is a list of functions with signature <code>fitfun(psi: Array, old_fit: Union[AdditiveComponent, None]) -&gt; AdditiveComponent</code>.</p>
+<p>All of the work goes into designing the additive components.  <code>fitfun</code> knows what data it should use, how to initialize itself either with an old fit or from scratch. <code>fit_additive</code> is meant just to handle the basic logic of iteratively fitting an additive model. </p>
+<p>There are a few features we add. 
+- When the argument <code>keep_intermediate = True</code> the function will save all the intermediate states of <code>components</code> after each run of the loop.
+- We also add arguments for controlling how convergence is monitored. </p>
+<h2 id="using-fit_additive-to-fit-new-susie-models">Using <code>fit_additive</code> to fit new SuSiE models</h2>
+<p>The functions that we can pass to <code>fit_additive</code> need to have a specific type signature </p>
+<p><div class="language-py highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span> <span class="nf">fun</span><span class="p">(</span><span class="n">psi</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span> <span class="n">fit</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">Fit</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Fit</span>
+</span></code></pre></div>
+Where <code>Fit</code> type represents the output of the fit function.
+Importantly, it must be able to handle the case where <code>fit = None</code>, as is the case in the first iteration.
+The function must know what data, parameters, etc should be used.</p>
+<p>To facilitate the development of new additive models, we provide a helper function for building functions that are compatible with <code>additive_model</code></p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">def</span> <span class="nf">make_fitfun</span><span class="p">(</span><span class="n">X</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">fun</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">initfun</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="sd">    Produces a function for fitting an additive component using the provided data and settings. </span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="sd">    The returned function has a signature compatible with the additive_model interface.</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd">    Args:</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="sd">        X (np.ndarray): A p x n matrix where p is the number of variables and n is the number of observations.</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="sd">        y (np.ndarray): An n-dimensional vector of observations corresponding to the rows of X.</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="sd">        fun (Callable): A function that takes `coef_init`, `X`, `y`, `psi`, and possibly other arguments specified in `kwargs`.</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="sd">        initfun (Callable): A function with the signature `(X, y, psi, fit) -&gt; Array` used to initialize `coef_init`. </span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="sd">                            It must be able to handle `fit` as `None`.</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="sd">        kwargs (dict): A dictionary of additional keyword arguments to pass to `fun`.</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="sd">    Returns:</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="sd">        Callable: A function `fitfun(psi: Array, fit: Union[None, Fit]) -&gt; Fit`, used to fit the SER model.</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    <span class="nd">@jax</span><span class="o">.</span><span class="n">jit</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    <span class="k">def</span> <span class="nf">fitfun</span><span class="p">(</span><span class="n">psi</span><span class="p">,</span> <span class="n">fit</span><span class="p">):</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>        <span class="n">coef_init</span> <span class="o">=</span> <span class="n">initfun</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">psi</span><span class="p">,</span> <span class="n">fit</span><span class="p">)</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>        <span class="k">return</span> <span class="n">fun</span><span class="p">(</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>            <span class="n">coef_init</span> <span class="o">=</span> <span class="n">coef_init</span><span class="p">,</span>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>            <span class="n">X</span> <span class="o">=</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="n">y</span><span class="p">,</span> <span class="n">offset</span> <span class="o">=</span> <span class="n">psi</span><span class="p">,</span>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>            <span class="o">**</span><span class="n">kwargs</span>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>        <span class="p">)</span>
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>    <span class="k">return</span> <span class="n">fitfun</span>
+</span></code></pre></div>
+<p><code>make_fitfun</code> assumes that the function <code>fun</code> has positional arguments <code>coef_init</code>, <code>X</code>, <code>y``, and</code>psi<code>. Other arguments can be specified in the dictionary</code>kwargs<code>which will be passed as keyword arguments to</code>fun`. </p>
+<p>For example we could construct a function for fitting the logistic SER with
+<div class="language-py highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span> <span class="nn">gibss.logistic</span> <span class="kn">import</span> <span class="n">logistic_ser_hermite</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">initfun</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">psi</span><span class="p">,</span> <span class="n">fit</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">fitfun</span> <span class="o">=</span> <span class="n">make_fitfun</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">logistic_ser_hermite</span><span class="p">,</span> <span class="n">initfun</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">fitfun</span><span class="p">(</span><span class="mf">0.</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div></p>
+<p>And fit an additive model (logistic SuSiE) with</p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">fitfuns</span> <span class="o">=</span> <span class="p">[</span><span class="n">fitfun</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">)]</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">fit</span><span class="p">,</span> <span class="n">state</span> <span class="o">=</span> <span class="n">additive_model</span><span class="p">(</span><span class="n">fitfuns</span><span class="p">)</span>
+</span></code></pre></div>
+<p>This framework makes it simple to implement new variations of SuSiE. </p>
+<ul>
+<li>Want to do SuSiE with a new likelihood? Implement the SER for that new likelihood. We have implementations for logistic regression and the Cox proportional hazards model.</li>
+<li>Want to estimate the prior variance? Implement a version of the SER that does that. </li>
+<li>Want to include fixed effects in the model? Implement a separate additive component that handles estimation of the fixed effect. This is how we handle the intercept in <code>gibss.logistic.fit_logistic_susie</code>. </li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../newton/" class="btn btn-neutral float-left" title="Newton"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../logistic_susie/" class="btn btn-neutral float-right" title="Logistic SuSiE">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../newton/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../logistic_susie/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../javascripts/mathjax.js"></script>
+      <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Logistic SuSiE - GIBSS</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Logistic SuSiE";
+        var mkdocs_page_input_path = "logistic_susie.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> GIBSS
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../newton/">Newton</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../additive/">Additive</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Logistic SuSiE</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#fitting-a-single-effect-regression-ser-model">Fitting a single effect regression (SER) model</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#the-logistic-ser">The logistic SER</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#estimating-the-prior-variance">Estimating the prior variance</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#rationale-for-default-optimization-hyperparameters">Rationale for default optimization hyperparameters</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#adjusting-the-optimization-hyperparameters">Adjusting the optimization hyperparameters</a>
+    </li>
+        </ul>
+    </li>
+    </ul>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">GIBSS</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Logistic SuSiE</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="logistic-susie">Logistic SuSiE</h1>
+<p>We have implemented two versions of logistic SuSiE. For the moment we recommend using the version in <code>gibss.logistic</code> module.
+The most important design decision made in this module is to handle the intercept and other fixed covariates in their own component of the additive model.
+This dramatically simplifies implementation of the SER, where each sub-problem corresponds to fitting a simple univariate logistic regression.
+It is much easier to develop a fast, stable optimization scheme for this 1d problem.</p>
+<p>Typically, we would also want to estimate an intercept, or the effect of other covariates that we would want to include in the model (e.g. genotype PCs for GWAS or eQTL studies). The univariate approach has the advantage that we can flexibly specify how to handle these effects independently from the SER.
+For example, we could change the regularization/priors on the fixed effect without needing to implement a new SER.</p>
+<h3 id="fitting-a-single-effect-regression-ser-model">Fitting a single effect regression (SER) model</h3>
+<p>The single effect regression is a simple model where exactly one of <span class="arithmatex">\(p\)</span> variables has a non-zero effect. Compared to more general variable selection problems inference in the SER is tractable because we can enumerate all possible configurations of non-zero effects. Inference in the SER can be carried out as follows.</p>
+<ol>
+<li>
+<p>For each variable  <span class="arithmatex">\(j = 1 \dots p\)</span></p>
+<ol>
+<li>Compute the MAP estimate for the effect <span class="arithmatex">\(b_j\)</span>, <span class="arithmatex">\(\hat b_j\)</span>.</li>
+<li>Approximate the Bayes Factor <span class="arithmatex">\(\text{BF}_j\)</span>, <span class="arithmatex">\(\widehat{\text{BF}}_j\)</span></li>
+</ol>
+</li>
+<li>
+<p>Compute the (approximate) posterior inclusion probabilities <span class="arithmatex">\(\alpha_j \propto \widehat{\text {BF}}_j\)</span></p>
+</li>
+<li>For each observation <span class="arithmatex">\(i = 1, \dots, n\)</span>, compute the (approximate) posterior mean predictions <span class="arithmatex">\(\psi_i = \sum \alpha_j \hat b_j x_{ij}\)</span>.</li>
+</ol>
+<h3 id="the-logistic-ser">The logistic SER</h3>
+<p>When you call <code>logistic.gibss.fit_logistic_susie</code> with <code>method='hermite'</code>, 
+you fit a logistic SER where the posterior mean and Bayes factor are approximated using adaptive Gauss-Hermite quadrature. When the quadrature rule uses <span class="arithmatex">\(m=1\)</span> points, this corresponds to the usual Laplace approximation. </p>
+<h4 id="estimating-the-prior-variance">Estimating the prior variance</h4>
+<p>We offer the option to estimate the prior variance. A simple way to estimate the prior variance is to evaluate the SER along a fixed grid of prior variance settings, and then selecting the SER with the highest marginal likelihood.</p>
+<p>We think that this approach is sufficient, compared to more precise maximization of the prior variance. It is implemented in <code>gibss.logistic.logistic_ser_hermite_grid</code>, which takes an argument <code>prior_variance_grid</code>. </p>
+<h4 id="rationale-for-default-optimization-hyperparameters">Rationale for default optimization hyperparameters</h4>
+<p>We use the following defaults in <code>gibss.logistic.</code> when <code>method = 'hermite'</code></p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">defaultserkwargs</span>  <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">prior_variance</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="mf">10.</span><span class="p">),</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">newtonkwargs</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=-</span><span class="mf">0.1</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
+</span></code></pre></div>
+<ol>
+<li><strong>Prior variance</strong> We take set the <code>pior_variance = 10.</code>. The appropriate choice of prior variance is of course dependent on the scale of the covariates. If we assume that the user are providing covariates where a unit increase in the covariate is non-negligble (e.g. increased dosage of the derived allele, inclusion in a gene set), then a prior variance of <span class="arithmatex">\(10\)</span> corresponds to pretty weak regularization of the effect. I think setting the default prior variance to a rather large value is safe in the sense that we will get smaller Bayes factors which will cause us to be conservative when evaluating evidence for the presence of a non-zero effect in the SER.</li>
+<li><strong>Number of iteration</strong> We estimate the MAP using Newton's method with backtracking line search. We use just <span class="arithmatex">\(5\)</span> iterations of Newton's method for each SER, but use the estimates from this iteration to initialize the next iteration. That is, we initialize component <span class="arithmatex">\(l\)</span> at iteration <span class="arithmatex">\(t+1\)</span> with the estimates from component <span class="arithmatex">\(l\)</span> at iteration <span class="arithmatex">\(t\)</span>. 
+Across several iterations of the outer loop, as <code>psi</code> stabilizes, the optimization problem in the inner loop remains unchanged.
+Heuristically, we save computational effort by not optimizing very precisely the intermediate objectives that are liable to change drastically iteration to iteration, and by leveraging the previous approximate optima when the problems are similar.</li>
+<li><strong>Settings for backtracking line search</strong> For convex problems, Newton exhibits fast (quadratic) convergence within a neighborhood of the optima with stepsize <span class="arithmatex">\(1\)</span>.Away from the optimum, the Newton update is guarunteed to be a descent direction but the step size may need tuning. We start with a stepsize of one and decay geometrically until the objective improves (or at least, does not increase too much). Since we are allowing just <span class="arithmatex">\(5\)</span> evaluations of the objective, and we would like to ensure that our effect gets updated at each stage, we set the step size scaling factor to <span class="arithmatex">\(0.2\)</span>, which gives a minimum stepsize of <span class="arithmatex">\(0.2^5\)</span>.
+In practice this minimum step size is small enough that we will improve the objective at each iteration.</li>
+<li><strong>Sufficient decrease parameter</strong>. The sufficient decrease parameter <code>gamma</code> says to accept a move if <span class="arithmatex">\(f(x_{t+1}) &lt; f(x_t) + \gamma ||g||_2^2\)</span> Where <span class="arithmatex">\(g\)</span> is the gradient. We actually allow slight decrease in the objective function by setting <span class="arithmatex">\(\gamma = -0.1\)</span>. The optimization is implemented in JAX, and we find that with 32bit floats, and optimization by the compiler it is not uncommon to dramatic decrease in the sub-optimality of a solution while actually seeing very slight increases in the objective. Therefore to avoid the optimization procedure getting stuck we allow for slight increases in the objective. It would be good to better understand the cause of these numerical issues.</li>
+</ol>
+<h4 id="adjusting-the-optimization-hyperparameters">Adjusting the optimization hyperparameters</h4>
+<p>The choice of optimization hyper-parameters can have a dramatic effect on performance.
+Newton's method with backtracking line search is guaranteed to converge, 
+but because we are repeatedly computing MAP estimates for many sub-problems, it pays to be mindful of the balance between accuracy and computation.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../additive/" class="btn btn-neutral float-left" title="Additive"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../additive/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../javascripts/mathjax.js"></script>
+      <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
