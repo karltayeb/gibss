@@ -13,9 +13,17 @@ from dataclasses import dataclass
 from gibss.newton import newton_factory
 from gibss.gd_backtracking import gd_factory
 from gibss.gibss import gibss
-from gibss.logisticprofile import UnivariateRegression, compute_wakefield_lbf, compute_lapmle_logp
+from gibss.logisticprofile import UnivariateRegression
 from gibss.ser import SER
-from gibss.susie import fit_additive, AdditiveComponent
+from gibss.additive import fit_additive_model, AdditiveComponent
+from gibss.additive import make_fitfun
+from gibss.utils import tree_stack
+from jax.tree_util import tree_map
+import warnings
+from gibss.additive import AdditiveState
+from gibss.credible_sets import compute_cs
+from gibss.utils import ensure_dense_and_float
+
 # @jax.jit
 # def nloglik_mle(coef, x, y, offset):
 #     """Logistic log-likelihood"""
@@ -164,28 +172,6 @@ def make_fixed_fitfun(X, y, kwargs=dict()):
         )
     return fitfun
 
-def make_logistic_hermite_fitfun(X, y, kwargs=dict()):
-    kwargs2 = dict(
-        prior_variance = float(10.),
-        newtonkwargs=dict(tol=1e-2, maxiter=5, alpha=0.2, gamma=-0.1)
-    )
-    kwargs2.update(kwargs)
-
-    @jax.jit
-    def fitfun(psi, old_fit):
-        # update default arguments
-        # fit SER
-        if old_fit is None:
-            coef_init = np.zeros((X.shape[0], 1))
-        else:
-            coef_init = old_fit.fits.state.x
-        return logistic_ser_hermite(
-            coef_init = coef_init,
-            X = X, y=y, offset = psi,
-            **kwargs2
-        )
-    return fitfun
-
 def make_logistic_hermite_grid_fitfun(X, y, kwargs=dict()):
     kwargs2 = dict(
         prior_variance_grid = jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1., 2., 4.]),
@@ -204,9 +190,6 @@ def make_logistic_hermite_grid_fitfun(X, y, kwargs=dict()):
     return fitfun
 
 
-from gibss.susie import tree_stack
-from jax.tree_util import tree_map
-from gibss.susie import AdditiveState
 
 @dataclass
 class SusieRes:
@@ -214,17 +197,75 @@ class SusieRes:
     sers: SER
     state: AdditiveState
 
-def fit_logistic_susie(X, y, L=5, method='hermite', serkwargs=dict(), **kwargs):
+def logistic_ser_hermite_init(X, y, psi, fit=None, warm=False):
+    """
+    If fit is None or warm=False initialize with zeros
+    Otherwise, initialize with with current effect estimates from fit.
+    """
+    if ((fit is None) or (not warm)): 
+        coef_init = jnp.zeros((X.shape[0], 1))
+    else:   
+        coef_init = fit.fits.state.x
+    return coef_init
+
+
+from collections import namedtuple
+SusieFit = namedtuple('SusieFit', ['fixed_effect', 'sers', 'state'])
+SusieSummary = namedtuple('SusieSummary', [
+    'fixed_effects', 'alpha', 'lbf', 'beta', 'prior_variance', 'lbf_ser', 'credible_sets'])
+
+
+def fit_logistic_susie(X, y, L=5, method='hermite', warm=True, serkwargs=dict(), **kwargs):
     fixedfitfun = make_fixed_fitfun(X, y)
     match method:   
         case 'hermite':
-            fitfun = make_logistic_hermite_fitfun(X, y, serkwargs)
+            defaultserkwargs  = dict(
+                prior_variance = float(10.),
+                newtonkwargs=dict(tol=1e-2, maxiter=5, alpha=0.2, gamma=-0.1)
+            )
+            defaultserkwargs.update(serkwargs)
+            fitfun = make_fitfun(X, y, logistic_ser_hermite, Partial(logistic_ser_hermite_init, warm=warm), defaultserkwargs)
         case 'hermite_eb':
-            fitfun = make_logistic_hermite_grid_fitfun(X, y, serkwargs)
+            defaultserkwargs = dict(
+                prior_variance_grid = jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1., 2., 4., 8.]),
+                newtonkwargs=dict(tol=1e-2, maxiter=20, alpha=0.8, gamma=-0.1)
+            )
+            defaultserkwargs.update(serkwargs)
+            fitfun = make_fitfun(X, y, logistic_ser_hermite_grid, Partial(logistic_ser_hermite_init, warm=False), defaultserkwargs)
+            if warm:
+                warnings.warn('warm=True not supported for hermite_eb, continuing with warm=False')
         case _:
             raise Exception(f'method = {method} is not a valid option')
     fitfuns = [fixedfitfun] + [fitfun for _ in range(L)]
-    components, state = fit_additive(fitfuns, **kwargs)
-    fixed_effects = components[0]
-    sers = tree_stack(components[1:])
-    return SusieRes(fixed_effects, sers, state)
+    model= fit_additive_model(fitfuns, **kwargs)
+
+    fixed_effect = model.components[0]
+    sers = tree_stack(model.components[1:])
+    fit = SusieFit(fixed_effect, sers, model.state)
+    return fit
+
+def summarize_susie(fit):
+    fixed_effects = fit.fixed_effect.fit.x
+    alpha = np.array(fit.sers.alpha)
+    lbf = np.array(fit.sers.fits.lbf)
+    beta = np.array(fit.sers.fits.beta.shape)
+    prior_variance = np.array(fit.sers.fits.prior_variance[:, 0])
+    lbf_ser = np.array(fit.sers.lbf_ser)
+    credible_sets = [compute_cs(a) for a in alpha]
+    res = SusieSummary(
+        fixed_effects,
+        alpha,
+        lbf,
+        beta,
+        prior_variance,
+        lbf_ser,
+        credible_sets
+    )
+    return res
+
+def fit_logistic_susie2(X, y, L=5, prior_variance=10., estimate_prior_variance=False, maxiter=50, tol=1e-3):
+    X = ensure_dense_and_float(X)
+    y = ensure_dense_and_float(y)
+    fit = fit_logistic_susie(X, y, L=L, warm=True, serkwargs=dict(prior_variance=prior_variance), maxiter=50, tol=1e-3)
+    summary = summarize_susie(fit)
+    return summary
