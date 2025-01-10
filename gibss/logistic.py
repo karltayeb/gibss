@@ -12,7 +12,6 @@ from typing import Any
 from dataclasses import dataclass
 from gibss.newton import newton_factory
 from gibss.gd_backtracking import gd_factory
-from gibss.gibss import gibss
 from gibss.logisticprofile import UnivariateRegression
 from gibss.ser import SER
 from gibss.additive import fit_additive_model, AdditiveComponent
@@ -212,7 +211,7 @@ def logistic_ser_hermite_init(X, y, psi, fit=None, warm=False):
 from collections import namedtuple
 SusieFit = namedtuple('SusieFit', ['fixed_effect', 'sers', 'state'])
 SusieSummary = namedtuple('SusieSummary', [
-    'fixed_effects', 'alpha', 'lbf', 'beta', 'prior_variance', 'lbf_ser', 'credible_sets'])
+    'fixed_effects', 'alpha', 'lbf', 'beta', 'prior_variance', 'lbf_ser', 'credible_sets', 'state'])
 
 
 def fit_logistic_susie(X, y, L=5, method='hermite', warm=True, serkwargs=dict(), **kwargs):
@@ -248,7 +247,7 @@ def summarize_susie(fit):
     fixed_effects = fit.fixed_effect.fit.x
     alpha = np.array(fit.sers.alpha)
     lbf = np.array(fit.sers.fits.lbf)
-    beta = np.array(fit.sers.fits.beta.shape)
+    beta = np.array(fit.sers.fits.beta)
     prior_variance = np.array(fit.sers.fits.prior_variance[:, 0])
     lbf_ser = np.array(fit.sers.lbf_ser)
     credible_sets = [compute_cs(a) for a in alpha]
@@ -259,7 +258,8 @@ def summarize_susie(fit):
         beta,
         prior_variance,
         lbf_ser,
-        credible_sets
+        credible_sets,
+        fit.state
     )
     return res
 
