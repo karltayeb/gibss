@@ -4,6 +4,11 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 from scipy import sparse
+from jax.tree_util import tree_map
+from jax import Array
+
+def npize(pytree):
+    return tree_map(lambda x: np.array(x) if isinstance(x, Array) else x, pytree)
 
 def todict(x):
     # if its a dataclass, convert to dict
@@ -44,6 +49,13 @@ def ensure_dense_and_float(matrix):
         # Provide a message to the user
         print("Input is a sparse matrix. Converting to a dense array.")
     
+    if isinstance(matrix, list):
+        try:
+            matrix = np.array(matrix)
+        except:
+            raise Exception("Failed to convert list to np.ndarray")
+
+
     # Ensure the matrix is a numpy array (in case it's a list or other type)
     if not isinstance(matrix, np.ndarray):
         raise TypeError("Input must be a sparse matrix or a numpy array.")
