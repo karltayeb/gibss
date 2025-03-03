@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gibss"
-version = "0.0"
+version = "0.0.1"
 dependencies = [
   "jax>=0.4.29",
   "jaxlib>=0.4.29",
   "numpy"
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [
   {name = "Karl Tayeb", email = "karl.tayeb7@gmail.com"}
 ]
