@@ -7,7 +7,7 @@ A natural criticism of the approach is that it does not propagate uncertainty in
 We have implemented several variations of logistic regression (exploiting sparsity, different treatments of the intercept, different approximations of the Bayes factor), Cox regression.
 
 ## Installation
-`gibss` is hosted on PiPy
+`gibss` is hosted on PyPI
 
 ```bash
 python3 -m venv venv
@@ -15,7 +15,7 @@ source venv/bin/activate # On Windows use `venv\Scripts\activate`
 pip install gibss
 ```
 
-Alternatively, you can clone this package 
+Alternatively, you can clone this package and install from local
 
 ```bash
 git clone https://github.com/yourusername/gibss.git
