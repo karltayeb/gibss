@@ -16,9 +16,17 @@ empirically it works well in many situations. -->
 ## Installation
 
 `gibss` is hosted on PyPI, so once Python is installed, gibss can be
-installed with pip:
+installed very simply with pip:
 
 ```bash
+pip install gibss
+```
+
+Note that gibbs requires numpy and jax. If you prefer to install them
+separately, say, within a conda environment, run this:
+
+```bash
+conda install numpy jax
 pip install gibss
 ```
 
@@ -31,7 +39,8 @@ source gibbs_venv/bin/activate # On Windows use `gibbs_venv\Scripts\activate`
 pip install gibss
 ```
 
-Alternatively, you can install the latest version available on GitHub by cloning or downloading this repository, then running pip:
+Alternatively, you can install the latest version available on GitHub
+by cloning or downloading this GitHub repository, then running pip:
 
 ```bash
 git clone https://github.com/karltayeb/gibss.git
