@@ -4,16 +4,17 @@ from functools import partial
 from dataclasses import dataclass
 from jax.typing import ArrayLike
 from jax.scipy.special import logsumexp
-from gibss.logistic import make_fixed_fitfun
 from gibss.additive import fit_additive_model, AdditiveComponent
 from scipy import sparse
 from gibss.utils import tree_stack, ensure_dense_and_float, npize
-from gibss.logistic import SusieFit
+from gibss.logistic import make_fixed_fitfun, SusieFit
 from gibss.credible_sets import compute_cs
 import numpy as np
 from collections import namedtuple
 from jax.tree_util import tree_map
 from jax.scipy.stats import norm
+from gibss.logistic import fit_logistic_nd
+from jax.tree_util import Partial
 
 
 @partial(
@@ -35,6 +36,7 @@ class OptState:
 @partial(
     jax.tree_util.register_dataclass,
     data_fields=[
+        "psi",
         "b",
         "llr",
         "lbf",
@@ -48,6 +50,7 @@ class OptState:
 )
 @dataclass
 class SparseSER:
+    psi: ArrayLike
     b: ArrayLike
     llr: ArrayLike
     lbf: ArrayLike
@@ -62,12 +65,11 @@ def _get_sizes(partition):
     return (jnp.roll(partition, -1) - partition)[:-1]
 
 
-def make_sparse_logistic_ser1d(X_sp, y, prior_variance=1.0, alpha=0.8, gamma=0.0):
+def make_sparse_logistic_ser1d(X_sp, prior_variance=1.0, alpha=0.8, gamma=0.0):
     partition = X_sp.indptr
     sizes = _get_sizes(partition)
     indices = X_sp.indices
     xlong = X_sp.data
-    ylong = y[X_sp.indices]
     p = X_sp.shape[0]
 
     ALPHA = alpha * jnp.ones(p)
@@ -111,7 +113,8 @@ def make_sparse_logistic_ser1d(X_sp, y, prior_variance=1.0, alpha=0.8, gamma=0.0
 
     merge_opstate_vmap = jax.vmap(merge_optstate, 0, 0)
 
-    def make_optstate(b, psi0long, prior_variance) -> OptState:
+    def make_optstate(ylong, b, psi0long, prior_variance) -> OptState:
+        # compute gradient, hessian, log likelihood ratio for proposed effect b
         blong = jnp.repeat(b, sizes)
         psilong = psi0long + xlong * blong
         plong = 1 / (1 + jnp.exp(-psilong))
@@ -127,16 +130,18 @@ def make_sparse_logistic_ser1d(X_sp, y, prior_variance=1.0, alpha=0.8, gamma=0.0
         return optstate
 
     @jax.jit
-    def update_b(state, psi0):
+    def update_b(ylong, state, psi0):
         psi0long = psi0[indices]
         # need to recompute state because `psi0` may have changed
-        optstate = make_optstate(state.optstate.x, psi0long, state.prior_variance)
+        optstate = make_optstate(
+            ylong, state.optstate.x, psi0long, state.prior_variance
+        )
         for _ in range(5):
             # propose newton step
             update_direction = -optstate.g / optstate.h
             b = optstate.x + update_direction * optstate.stepsize
             # package into new optimization state
-            optstate_proposed = make_optstate(b, psi0long, state.prior_variance)
+            optstate_proposed = make_optstate(ylong, b, psi0long, state.prior_variance)
             # accept state if sufficient increase
             optstate = merge_opstate_vmap(optstate, optstate_proposed)
 
@@ -145,6 +150,7 @@ def make_sparse_logistic_ser1d(X_sp, y, prior_variance=1.0, alpha=0.8, gamma=0.0
         lbf_ser = logsumexp(lbf + jnp.log(state.pi))
         alpha = jnp.exp(lbf + jnp.log(state.pi) - lbf_ser)
         state = SparseSER(
+            None,
             optstate.x,
             optstate.f,
             lbf,
@@ -156,7 +162,8 @@ def make_sparse_logistic_ser1d(X_sp, y, prior_variance=1.0, alpha=0.8, gamma=0.0
         )
         return state
 
-    def logistic_ser_1d(psi, fit):
+    def logistic_ser_1d(psi, fit, y):
+        ylong = y[indices]
         if fit is None:
             p, n = X_sp.shape
             opt0 = OptState(
@@ -169,20 +176,40 @@ def make_sparse_logistic_ser1d(X_sp, y, prior_variance=1.0, alpha=0.8, gamma=0.0
                 GAMMA,
             )
             state0 = SparseSER(
-                jnp.zeros(p), 0, 0, 0, -jnp.inf, jnp.ones(p) / p, prior_variance, opt0
+                None,
+                jnp.zeros(p),
+                0,
+                0,
+                0,
+                -jnp.inf,
+                jnp.ones(p) / p,
+                prior_variance,
+                opt0,
             )
-            state = update_b(state0, psi)
+            state = update_b(ylong, state0, psi)
         else:
-            state = update_b(fit.fit, psi)
+            state = update_b(ylong, fit, psi)
         psi = (state.alpha * state.b) @ X_sp
-        return AdditiveComponent(psi, state)
+        return SparseSER(
+            psi,
+            state.b,
+            state.llr,
+            state.lbf,
+            state.alpha,
+            state.lbf_ser,
+            state.pi,
+            state.prior_variance,
+            state.optstate,
+        )
 
     return logistic_ser_1d
 
 
 def fit_logistic_susie(X_sp, y, L, prior_variance=1.0, alpha=0.8, gamma=0.0, **kwargs):
-    fitfun = make_sparse_logistic_ser1d(X_sp, y, prior_variance, alpha, gamma)
-    fixedfitfun = make_fixed_fitfun(X_sp, y)
+    fitfun = Partial(
+        make_sparse_logistic_ser1d(X_sp, prior_variance, alpha, gamma), y=y
+    )
+    fixedfitfun = Partial(make_fixed_fitfun(), y=y)
     fitfuns = [fixedfitfun] + [fitfun for _ in range(L)]
     model = fit_additive_model(fitfuns, **kwargs)
 
@@ -210,12 +237,12 @@ SusieSummary = namedtuple(
 
 def summarize_susie(fit):
     fixed_effects = np.array(fit.fixed_effect.fit.x)
-    alpha = np.array(fit.sers.fit.alpha)
-    lbf = np.array(fit.sers.fit.lbf)
-    beta = np.array(fit.sers.fit.b)
-    prior_variance = np.array(fit.sers.fit.prior_variance)
-    lbf_ser = np.array(fit.sers.fit.lbf_ser)
-    optstate = tree_map(np.array, fit.sers.fit.optstate).__dict__
+    alpha = np.array(fit.sers.alpha)
+    lbf = np.array(fit.sers.lbf)
+    beta = np.array(fit.sers.b)
+    prior_variance = np.array(fit.sers.prior_variance)
+    lbf_ser = np.array(fit.sers.lbf_ser)
+    optstate = tree_map(np.array, fit.sers.optstate).__dict__
     credible_sets = [compute_cs(a).__dict__ for a in alpha]
     res = SusieSummary(
         fixed_effects,
