@@ -1,31 +1,47 @@
 # Generalized IBSS
 
-This package implements Generalized iterative Bayesian stepwise selection (GIBSS), which is a heuristic for approximating the posterior distribution to the generalized sum of single effects regression (GSuSiE).
-The idea is simple: accurately estimate the single effect regression, which can be done through various approximation techniques (Laplace, quadrature, etc.), conditional on point estimates from other effects.
-A natural criticism of the approach is that it does not propagate uncertainty in the point estimates. However, we find empirically it works well in many situations. 
+This Python software implements Generalized iterative Bayesian
+stepwise selection (GIBSS), an algorithm for estimating posterior
+distributions under "Generalized Sum of Single Effects" (GSuSiE)
+models. The current software implements several variants of the GSuSiE
+model, including for logistic regression and Cox regression.
 
-We have implemented several variations of logistic regression (exploiting sparsity, different treatments of the intercept, different approximations of the Bayes factor), Cox regression.
+<!-- The idea is simple: accurately estimate the single effect
+regression, which can be done through various approximation techniques
+(Laplace, quadrature, etc.), conditional on point estimates from other
+effects.  A natural criticism of the approach is that it does not
+propagate uncertainty in the point estimates. However, we find
+empirically it works well in many situations. -->
 
 ## Installation
-`gibss` is hosted on PyPI
+
+`gibss` is hosted on PyPI, so once Python is installed, gibss can be
+installed with pip:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate # On Windows use `venv\Scripts\activate`
 pip install gibss
 ```
 
-Alternatively, you can clone this package and install from local
+It you prefer to install within a new virtual environment (e.g.,
+with the name "gibss_venv"), run these lines:
 
 ```bash
-git clone https://github.com/yourusername/gibss.git
+python3 -m venv gibbs_venv
+source gibbs_venv/bin/activate # On Windows use `gibbs_venv\Scripts\activate`
+pip install gibss
+```
+
+Alternatively, you can install the latest version available on GitHub by cloning or downloading this repository, then running pip:
+
+```bash
+git clone https://github.com/karltayeb/gibss.git
 cd gibss
-python3 -m venv venv
-source venv/bin/activate # On Windows use `venv\Scripts\activate`
 pip install .
 ```
 
 ## Minimal example
+
+Here's a very minimal example to get you started:
 
 ```python
 from gibss.logistic1d import fit_logistic1d_susie
@@ -37,7 +53,7 @@ X = np.random.normal(size=(p, n))
 logit = X[0] - 1
 y = 1 / (1 + np.exp(-logit))
 
-# fit with 5 effects
+# Fit a logisitic GSuSiE model with L = 5 effects.
 fit = fit_logistic1d_susie(X, y, L=5)
 ```
 
