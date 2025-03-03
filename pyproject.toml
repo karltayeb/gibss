@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gibss"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
   "jax>=0.4.29",
   "jaxlib>=0.4.29",

@@ -50,7 +50,8 @@ pip install .
 
 ## Minimal example
 
-Here's a very minimal example to get you started:
+Here's a very minimal example to get you started. It fits a logistic
+SuSiE model to the data (X, y) with L = 5 single effects:
 
 ```python
 from gibss.logistic1d import fit_logistic1d_susie
@@ -62,7 +63,7 @@ X = np.random.normal(size=(p, n))
 logit = X[0] - 1
 y = 1 / (1 + np.exp(-logit))
 
-# Fit a logisitic GSuSiE model with L = 5 effects.
+# Fit a logisitic SuSiE model with L = 5 effects.
 fit = fit_logistic1d_susie(X, y, L=5)
 ```
 
