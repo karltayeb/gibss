@@ -1,27 +1,37 @@
 # Implement Logistic SER using JAX
 import jax.numpy as jnp
 from jax.scipy.stats import norm
-from jax.scipy.special import logsumexp
 import jax
-from jax import Array
 import numpy as np
 from functools import partial
-from gibss.ser import ser, _ser
 from jax.tree_util import Partial
-from typing import Any
 from dataclasses import dataclass
 from gibss.newton import newton_factory
-from gibss.gd_backtracking import gd_factory
-from gibss.logisticprofile import UnivariateRegression
 from gibss.ser import SER
 from gibss.additive import fit_additive_model, AdditiveComponent
 from gibss.additive import make_fitfun
 from gibss.utils import tree_stack
-from jax.tree_util import tree_map
 import warnings
 from gibss.additive import AdditiveState
 from gibss.credible_sets import compute_cs
 from gibss.utils import ensure_dense_and_float
+from typing import Any
+from gibss.additive import AdditiveModel, update_additive_model
+
+
+@partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["logp", "lbf", "beta", "prior_variance", "state"],
+    meta_fields=[],
+)
+@dataclass
+class UnivariateRegression:
+    logp: float
+    lbf: float
+    beta: float
+    prior_variance: float
+    state: Any
+
 
 # @jax.jit
 # def nloglik_mle(coef, x, y, offset):
@@ -33,21 +43,34 @@ from gibss.utils import ensure_dense_and_float
 # nloglik_mle_hess = jax.hessian(nloglik_mle)
 # nloglik_mle_vmap = jax.vmap(nloglik_mle, in_axes=(0, None, None, None))
 
-@jax.jit
-def nloglik(coef, x, y, offset, prior_variance=1.):
+
+def nloglik(coef, x, y, offset, prior_variance=1.0):
     """Logistic log-likelihood"""
     psi = offset + (x @ coef)
-    ll = jnp.sum(y * psi - jnp.logaddexp(0, psi)) + norm.logpdf(coef, 0, jnp.sqrt(prior_variance)).sum()
+    ll = (
+        jnp.sum(y * psi - jnp.logaddexp(0, psi))
+        + norm.logpdf(coef, 0, jnp.sqrt(prior_variance)).sum()
+    )
     return -ll
 
-@jax.jit
-def nloglik1d(coef, x, y, offset, prior_variance=1.):
+
+def nloglik1d(coef, x, y, offset, prior_variance=1.0):
     """Logistic log-likelihood"""
     psi = offset + (x * coef[0])
-    ll = jnp.sum(y * psi - jnp.logaddexp(0, psi)) + norm.logpdf(coef[0], 0, jnp.sqrt(prior_variance))
+    ll = jnp.sum(y * psi - jnp.logaddexp(0, psi)) + norm.logpdf(
+        coef[0], 0, jnp.sqrt(prior_variance)
+    )
     return -ll
 
-def fit_logistic_nd(coef_init, X, y, offset, prior_variance=1e6, newtonkwargs=dict(tol=1e-3, maxiter=500, alpha=0.8, gamma=-0.1)):
+
+def fit_logistic_nd(
+    coef_init,
+    X,
+    y,
+    offset,
+    prior_variance=1e6,
+    newtonkwargs=dict(tol=1e-3, maxiter=500, alpha=0.8, gamma=-0.1),
+):
     # estimate the MLE
     fun = partial(nloglik, x=X, y=y, offset=offset, prior_variance=prior_variance)
     newton_solver = newton_factory(fun, **newtonkwargs)
@@ -55,85 +78,175 @@ def fit_logistic_nd(coef_init, X, y, offset, prior_variance=1e6, newtonkwargs=di
     psi = X @ res.x
     return AdditiveComponent(psi, res)
 
+
 nloglik_vmap = jax.vmap(nloglik, in_axes=(0, None, None, None, None))
 nloglik1d_vmap = jax.vmap(nloglik1d, in_axes=(0, None, None, None, None))
 
-def fit_logistic_1d(coef_init, x, y, offset, prior_variance, newtonkwargs = dict(maxiter=50, tol=1e-3, alpha=0.5, gamma=0.0)):
+
+def fit_logistic_1d(
+    coef_init,
+    x,
+    y,
+    offset,
+    prior_variance,
+    newtonkwargs=dict(maxiter=50, tol=1e-3, alpha=0.5, gamma=0.0),
+):
     fun = Partial(nloglik1d, x=x, y=y, offset=offset, prior_variance=prior_variance)
     newton_solver = newton_factory(fun, **newtonkwargs)
     return newton_solver(coef_init)
 
+
+def make_fixed_fitfun(Z: Any = None, kwargs: dict = dict()):
+    kwargs2 = dict(
+        prior_variance=float(1e6),
+        newtonkwargs=dict(tol=1e-3, maxiter=500, alpha=0.8, gamma=-0.1),
+    )
+    kwargs2.update(kwargs)
+
+    @jax.jit
+    def fitfun1(psi, old_fit, y):
+        # TODO: take Z as an argument
+        coef_init = jnp.zeros(1)
+        Z = np.ones((y.size, 1))
+
+        # Fit fixed effects
+        return fit_logistic_nd(coef_init=coef_init, X=Z, y=y, offset=psi, **kwargs2)
+
+    @jax.jit
+    def fitfun2(psi, old_fit, y):
+        # TODO: take Z as an argument
+        coef_init = jnp.zeros(Z.shape[1])
+        return fit_logistic_nd(coef_init=coef_init, X=Z, y=y, offset=psi, **kwargs2)
+
+    return fitfun1 if Z is None else fitfun2
+
+
 # gauss-hermite quadrature nodes and weights
 def hermite_factory(m):
     base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
-    def hermite(coef_init, x, y, offset, prior_variance, newtonkwargs = dict(maxiter=50, tol=1e-3, alpha=0.5, gamma=0.0)):
+
+    def hermite(
+        coef_init,
+        x,
+        y,
+        offset,
+        prior_variance,
+        newtonkwargs=dict(maxiter=50, tol=1e-3, alpha=0.5, gamma=0.0),
+    ):
         state = fit_logistic_1d(coef_init, x, y, offset, prior_variance, newtonkwargs)
         params = state.x
         hessian = -state.h
 
         # set up quadrature
         mu = params[0]
-        sigma = jnp.sqrt(-1/hessian[0,0])
+        sigma = jnp.sqrt(-1 / hessian[0, 0])
         nodes = base_nodes * jnp.sqrt(2) * sigma + mu
         weights = base_weights / jnp.sqrt(jnp.pi)
 
         # compute logp
+        ll0 = (y * offset - jnp.log(1 + jnp.exp(offset))).sum()
         ll = -nloglik1d_vmap(jnp.atleast_2d(nodes).T, x, y, offset, prior_variance)
-        logp = jax.scipy.special.logsumexp(ll - norm.logpdf(nodes, loc=mu, scale=sigma) + jnp.log(weights)) 
-        lbf = logp + nloglik1d(jnp.zeros(1), x, y, offset, 1/jnp.sqrt(2 * jnp.pi)) # MAGIC NUMBER makes the logN(0, 0, 1/(2 pi)) = 0
-
+        logp = jax.scipy.special.logsumexp(
+            ll - norm.logpdf(nodes, loc=mu, scale=sigma) + jnp.log(weights)
+        )
+        lbf = logp - ll0
         # compute posterior mean of effect
         y2 = nodes * jnp.exp(ll - logp)
-        beta = jnp.sum(y2/norm.pdf(nodes, loc=mu, scale=sigma) * weights)
+        beta = jnp.sum(y2 / norm.pdf(nodes, loc=mu, scale=sigma) * weights)
         return UnivariateRegression(logp, lbf, beta, prior_variance, state)
-    
+
     hermite_jit = jax.jit(hermite)
     return hermite_jit
 
-@partial(jax.jit, static_argnames=['m'])
-def logistic_ser_hermite(coef_init, X, y, offset, m=1, prior_variance=1.0, newtonkwargs=dict()):
-    vhermite = jax.vmap(Partial(hermite_factory(m), y=y, offset=offset, prior_variance=prior_variance, newtonkwargs=newtonkwargs), in_axes=(0, 0))
+
+@partial(jax.jit, static_argnames=["m"])
+def logistic_ser_hermite(
+    coef_init, X, y, offset, m=1, prior_variance=1.0, newtonkwargs=dict()
+):
+    vhermite = jax.vmap(
+        Partial(
+            hermite_factory(m),
+            y=y,
+            offset=offset,
+            prior_variance=prior_variance,
+            newtonkwargs=newtonkwargs,
+        ),
+        in_axes=(0, 0),
+    )
     fits = vhermite(coef_init, X)
-    logp = -fits.state.f
-    ll0 = jnp.sum(y * offset - jnp.logaddexp(0, offset))
-    lbf = -fits.state.f - ll0
+    lbf = fits.lbf
     alpha = jnp.exp(lbf - jax.scipy.special.logsumexp(lbf))
     psi = (alpha * fits.beta) @ X
     lbf_ser = jax.scipy.special.logsumexp(lbf) - jnp.log(lbf.size)
     return SER(psi, alpha, lbf_ser, prior_variance, fits)
 
+
 # gauss-hermite quadrature nodes and weights
 def hermite_grid_factory(m):
     base_nodes, base_weights = np.polynomial.hermite.hermgauss(m)
-    def hermite_grid(coef_init, x, y, offset, prior_variance_grid, newtonkwargs=dict(maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1)):
+
+    def hermite_grid(
+        coef_init,
+        x,
+        y,
+        offset,
+        prior_variance_grid,
+        newtonkwargs=dict(maxiter=50, tol=0.1, alpha=0.1, gamma=-0.1),
+    ):
         def hermite_inner(coef_init, prior_variance):
-            state = fit_logistic_1d(coef_init, x, y, offset, prior_variance, newtonkwargs)
+            state = fit_logistic_1d(
+                coef_init, x, y, offset, prior_variance, newtonkwargs
+            )
             params = state.x
             hessian = -state.h
-        
+
             # set up quadrature
             mu = params[0]
-            sigma = jnp.sqrt(-1/hessian[0,0])
+            sigma = jnp.sqrt(-1 / hessian[0, 0])
             nodes = base_nodes * jnp.sqrt(2) * sigma + mu
             weights = base_weights / jnp.sqrt(jnp.pi)
 
             # compute logp
             ll = -nloglik1d_vmap(jnp.atleast_2d(nodes).T, x, y, offset, prior_variance)
-            logp = jax.scipy.special.logsumexp(ll - norm.logpdf(nodes, loc=mu, scale=sigma) + jnp.log(weights)) 
-            lbf = logp + nloglik1d(jnp.zeros(1), x, y, offset, 1/jnp.sqrt(2 * jnp.pi)) # MAGIC NUMBER makes the logN(0, 0, 1/(2 pi)) = 0
+            logp = jax.scipy.special.logsumexp(
+                ll - norm.logpdf(nodes, loc=mu, scale=sigma) + jnp.log(weights)
+            )
+            lbf = logp + nloglik1d(
+                jnp.zeros(1), x, y, offset, 1 / jnp.sqrt(2 * jnp.pi)
+            )  # MAGIC NUMBER makes the logN(0, 0, 1/(2 pi)) = 0
 
             # compute posterior mean of effect
             y2 = nodes * jnp.exp(ll - logp)
-            beta = jnp.sum(y2/norm.pdf(nodes, loc=mu, scale=sigma) * weights)
+            beta = jnp.sum(y2 / norm.pdf(nodes, loc=mu, scale=sigma) * weights)
             return state.x, UnivariateRegression(logp, lbf, beta, prior_variance, state)
+
         res = jax.lax.scan(hermite_inner, coef_init, prior_variance_grid)
         return res[1]
+
     return jax.jit(hermite_grid)
 
-@partial(jax.jit, static_argnames=['m'])
-def logistic_ser_hermite_grid(coef_init, X, y, offset, m=1, prior_variance_grid=jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 1., 10., 100.]), newtonkwargs=dict()):
+
+@partial(jax.jit, static_argnames=["m"])
+def logistic_ser_hermite_grid(
+    coef_init,
+    X,
+    y,
+    offset,
+    m=1,
+    prior_variance_grid=jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 1.0, 10.0, 100.0]),
+    newtonkwargs=dict(),
+):
     # fit at all grid points
-    vhermite = jax.vmap(Partial(hermite_grid_factory(m), y=y, offset=offset, prior_variance_grid=prior_variance_grid, newtonkwargs=newtonkwargs), in_axes=(0, 0))
+    vhermite = jax.vmap(
+        Partial(
+            hermite_grid_factory(m),
+            y=y,
+            offset=offset,
+            prior_variance_grid=prior_variance_grid,
+            newtonkwargs=newtonkwargs,
+        ),
+        in_axes=(0, 0),
+    )
     gridfits = vhermite(coef_init, X)
 
     # select the value of the prior variance that maximizes the marginal evidence for the SER
@@ -150,31 +263,55 @@ def logistic_ser_hermite_grid(coef_init, X, y, offset, m=1, prior_variance_grid=
     return SER(psi, alpha, lbf_ser, prior_variance_grid[best_prior_variance], gridfits)
 
 
-def make_fixed_fitfun(X, y, kwargs=dict()):
-    kwargs2 = dict(
-        prior_variance = float(1e6),
-        newtonkwargs=dict(tol=1e-3, maxiter=500, alpha=0.8, gamma=-0.1)
-    )
-    kwargs2.update(kwargs)
+def logistic_hermite_ser_init(X, y, psi, fit=None, warm=False):
+    """
+    If fit is None or warm=False initialize with zeros
+    Otherwise, initialize with with current effect estimates from fit.
+    """
+    if (fit is None) or (not warm):
+        coef_init = jnp.zeros((X.shape[0], 1))
+    else:
+        coef_init = fit.fits.state.x
+    return coef_init
 
-    @jax.jit
-    def fitfun(psi, old_fit):
-        # TODO: take Z as an argument
-        coef_init = jnp.zeros(1) 
-        Z = np.ones((y.size, 1))
 
-        # Fit fixed effects
-        return fit_logistic_nd(
-            coef_init = coef_init,
-            X = Z, y = y, offset = psi,
-            **kwargs2
+# followin the pattern of logistic_sparse we need SER functions that taek arguments psi, fit, y
+def make_logistic_hermite_ser(
+    X,
+    prior_variance=1.0,
+    m=1,
+    newtonkwargs={"maxiter": 50, "tol": 1e-5, "alpha": 0.1, "gamma": 0.0},
+):
+    def f(psi, fit, y):
+        coef_init = logistic_hermite_ser_init(X, y, psi, fit=fit, warm=True)
+        fit = logistic_ser_hermite(
+            coef_init, X, y, psi, m, prior_variance, newtonkwargs
         )
-    return fitfun
+
+        return fit
+
+    return f
+
+
+def fit_logisticprofile_hermite_susie(
+    X, y, L, prior_variance=1.0, m=1, maxiter=100, tol=1e-5
+):
+    fitfun = Partial(make_logistic_hermite_ser(X, prior_variance, m), y=y)
+    fixedfitfun = Partial(make_fixed_fitfun(), y=y)
+    fitfuns = [fixedfitfun] + [fitfun for _ in range(L)]
+    model = AdditiveModel(None, None, fitfuns, None)
+    model = update_additive_model(model, maxiter=maxiter, tol=tol)
+
+    fixed_effect = model.components[0]
+    sers = tree_stack(model.components[1:])
+    fit = SusieFit(fixed_effect, sers, model.state)
+    return fit
+
 
 def make_logistic_hermite_grid_fitfun(X, y, kwargs=dict()):
     kwargs2 = dict(
-        prior_variance_grid = jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1., 2., 4.]),
-        newtonkwargs=dict(tol=1e-3, maxiter=5, alpha=0.8, gamma=-0.1)
+        prior_variance_grid=jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1.0, 2.0, 4.0]),
+        newtonkwargs=dict(tol=1e-3, maxiter=5, alpha=0.8, gamma=-0.1),
     )
     kwargs2.update(kwargs)
 
@@ -182,12 +319,10 @@ def make_logistic_hermite_grid_fitfun(X, y, kwargs=dict()):
     def fitfun(psi, old_fit):
         coef_init = np.zeros((X.shape[0], 1))
         return logistic_ser_hermite_grid(
-            coef_init = coef_init,
-            X = X, y=y, offset = psi,
-            **kwargs2
+            coef_init=coef_init, X=X, y=y, offset=psi, **kwargs2
         )
-    return fitfun
 
+    return fitfun
 
 
 @dataclass
@@ -196,52 +331,84 @@ class SusieRes:
     sers: SER
     state: AdditiveState
 
+
 def logistic_ser_hermite_init(X, y, psi, fit=None, warm=False):
     """
     If fit is None or warm=False initialize with zeros
     Otherwise, initialize with with current effect estimates from fit.
     """
-    if ((fit is None) or (not warm)): 
+    if (fit is None) or (not warm):
         coef_init = jnp.zeros((X.shape[0], 1))
-    else:   
+    else:
         coef_init = fit.fits.state.x
     return coef_init
 
 
 from collections import namedtuple
-SusieFit = namedtuple('SusieFit', ['fixed_effect', 'sers', 'state'])
-SusieSummary = namedtuple('SusieSummary', [
-    'fixed_effects', 'alpha', 'lbf', 'beta', 'prior_variance', 'lbf_ser', 'credible_sets', 'state'])
+
+SusieFit = namedtuple("SusieFit", ["fixed_effect", "sers", "state"])
+SusieSummary = namedtuple(
+    "SusieSummary",
+    [
+        "fixed_effects",
+        "alpha",
+        "lbf",
+        "beta",
+        "prior_variance",
+        "lbf_ser",
+        "credible_sets",
+        "state",
+    ],
+)
 
 
-def fit_logistic_susie(X, y, L=5, method='hermite', warm=True, serkwargs=dict(), **kwargs):
+def fit_logistic_susie(
+    X, y, L=5, method="hermite", warm=True, serkwargs=dict(), **kwargs
+):
     fixedfitfun = make_fixed_fitfun(X, y)
-    match method:   
-        case 'hermite':
-            defaultserkwargs  = dict(
-                prior_variance = float(10.),
-                newtonkwargs=dict(tol=1e-2, maxiter=5, alpha=0.2, gamma=-0.1)
-            )
-            defaultserkwargs.update(serkwargs)
-            fitfun = make_fitfun(X, y, logistic_ser_hermite, Partial(logistic_ser_hermite_init, warm=warm), defaultserkwargs)
-        case 'hermite_eb':
+    match method:
+        case "hermite":
             defaultserkwargs = dict(
-                prior_variance_grid = jnp.array([1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1., 2., 4., 8.]),
-                newtonkwargs=dict(tol=1e-2, maxiter=20, alpha=0.8, gamma=-0.1)
+                prior_variance=float(10.0),
+                newtonkwargs=dict(tol=1e-2, maxiter=5, alpha=0.2, gamma=-0.1),
             )
             defaultserkwargs.update(serkwargs)
-            fitfun = make_fitfun(X, y, logistic_ser_hermite_grid, Partial(logistic_ser_hermite_init, warm=False), defaultserkwargs)
+            fitfun = make_fitfun(
+                X,
+                y,
+                logistic_ser_hermite,
+                Partial(logistic_ser_hermite_init, warm=warm),
+                defaultserkwargs,
+            )
+        case "hermite_eb":
+            defaultserkwargs = dict(
+                prior_variance_grid=jnp.array(
+                    [1e-6, 1e-4, 1e-2, 1e-1, 0.5, 1.0, 2.0, 4.0, 8.0]
+                ),
+                newtonkwargs=dict(tol=1e-2, maxiter=20, alpha=0.8, gamma=-0.1),
+            )
+            defaultserkwargs.update(serkwargs)
+            fitfun = make_fitfun(
+                X,
+                y,
+                logistic_ser_hermite_grid,
+                Partial(logistic_ser_hermite_init, warm=False),
+                defaultserkwargs,
+            )
             if warm:
-                warnings.warn('warm=True not supported for hermite_eb, continuing with warm=False')
+                warnings.warn(
+                    "warm=True not supported for hermite_eb, continuing with warm=False"
+                )
         case _:
-            raise Exception(f'method = {method} is not a valid option')
+            raise Exception(f"method = {method} is not a valid option")
     fitfuns = [fixedfitfun] + [fitfun for _ in range(L)]
-    model= fit_additive_model(fitfuns, **kwargs)
+    model = fit_additive_model(fitfuns, **kwargs)
 
     fixed_effect = model.components[0]
     sers = tree_stack(model.components[1:])
     fit = SusieFit(fixed_effect, sers, model.state)
     return fit
+
 
 def summarize_susie(fit):
     fixed_effects = fit.fixed_effect.fit.x
@@ -259,13 +426,24 @@ def summarize_susie(fit):
         prior_variance,
         lbf_ser,
         credible_sets,
-        fit.state
+        fit.state,
     )
     return res
 
-def fit_logistic_susie2(X, y, L=5, prior_variance=10., estimate_prior_variance=False, maxiter=50, tol=1e-3):
+
+def fit_logistic_susie2(
+    X, y, L=5, prior_variance=10.0, estimate_prior_variance=False, maxiter=50, tol=1e-3
+):
     X = ensure_dense_and_float(X)
     y = ensure_dense_and_float(y)
-    fit = fit_logistic_susie(X, y, L=L, warm=True, serkwargs=dict(prior_variance=prior_variance), maxiter=50, tol=1e-3)
+    fit = fit_logistic_susie(
+        X,
+        y,
+        L=L,
+        warm=True,
+        serkwargs=dict(prior_variance=prior_variance),
+        maxiter=50,
+        tol=1e-3,
+    )
     summary = summarize_susie(fit)
     return summary
